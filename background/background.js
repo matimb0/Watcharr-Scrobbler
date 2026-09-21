@@ -16,6 +16,10 @@ const DEFAULT_SETTINGS = {
   threshold: 90, // % of a title watched before it counts as "finished"
   // "" = no explicit choice yet -> UIs resolve to the browser language.
   language: "",
+  // Self-hosted Jellyfin server.
+  // Stored normalized (origin + base path, no trailing slash); empty = the
+  // Jellyfin service stays inactive.
+  jellyfinUrl: "",
 };
 
 async function getSettings() {
@@ -25,6 +29,127 @@ async function getSettings() {
 
 async function saveSettings(settings) {
   await browser.storage.local.set({ settings });
+}
+
+/* ---------------------------------------------------------------------------
+ * Jellyfin content script (dynamic registration)
+ *
+ * Jellyfin is self-hosted, so its URL cannot be listed in the manifest's
+ * `content_scripts`. The content script is registered here for the configured
+ * server (and re-registered whenever that server changes), plus injected into
+ * already-open Jellyfin tabs so no reload is needed.
+ * ------------------------------------------------------------------------ */
+const JELLYFIN_SCRIPT_ID = "watcharr-jellyfin";
+
+function sameStringList(a, b) {
+  const x = Array.isArray(a) ? a : [];
+  const y = Array.isArray(b) ? b : [];
+  return x.length === y.length && x.every((v, i) => v === y[i]);
+}
+
+async function registerJellyfinContentScript() {
+  if (!browser.scripting || !browser.scripting.registerContentScripts) return;
+  const svc = WatcharrServices.byId("jellyfin");
+  const pattern = svc && svc.urlPattern;
+
+  // Firefox event pages (and the Chrome service worker) re-run this on every
+  // wake-up – so check the CURRENT registration first and only touch it when
+  // the configured server actually changed.
+  let current = null;
+  try {
+    const all = await browser.scripting.getRegisteredContentScripts();
+    current = (all || []).find((s) => s && s.id === JELLYFIN_SCRIPT_ID) || null;
+  } catch (_) {
+    /* getRegisteredContentScripts unavailable – fall through and re-register */
+  }
+
+  const upToDate =
+    current &&
+    pattern &&
+    sameStringList(current.matches, [pattern]) &&
+    sameStringList(current.js, svc.contentScripts);
+  if (upToDate) return;
+
+  if (current) {
+    try {
+      await browser.scripting.unregisterContentScripts({
+        ids: [JELLYFIN_SCRIPT_ID],
+      });
+    } catch (err) {
+      console.error(
+        "[watcharr-scrobbler] Jellyfin content script could not be removed:",
+        err,
+      );
+    }
+  }
+  if (!pattern) return;
+
+  try {
+    await browser.scripting.registerContentScripts([
+      {
+        id: JELLYFIN_SCRIPT_ID,
+        matches: [pattern],
+        js: svc.contentScripts,
+        runAt: "document_idle",
+      },
+    ]);
+    console.log(
+      "[watcharr-scrobbler] Jellyfin content script registered for",
+      pattern,
+    );
+  } catch (err) {
+    console.error(
+      "[watcharr-scrobbler] Jellyfin content script registration failed:",
+      err,
+    );
+  }
+}
+
+/** Injects the Jellyfin content script into tabs that are already open and
+ *  don't have it yet (the dynamic registration only covers tabs loaded
+ *  afterwards). */
+async function injectJellyfinIntoOpenTabs() {
+  const svc = WatcharrServices.byId("jellyfin");
+  if (
+    !svc ||
+    !svc.urlPattern ||
+    !browser.scripting ||
+    !browser.scripting.executeScript
+  ) {
+    return;
+  }
+  let tabs = [];
+  try {
+    tabs = await browser.tabs.query({ url: svc.urlPattern });
+  } catch (_) {
+    return;
+  }
+  for (const tab of tabs) {
+    if (tab.id == null) continue;
+    try {
+      // Already prepared? (the content script answers the ping)
+      await browser.tabs.sendMessage(tab.id, { type: "watcharr:ping" });
+      continue;
+    } catch (_) {
+      /* no content script in this tab -> inject below */
+    }
+    try {
+      await browser.scripting.executeScript({
+        target: { tabId: tab.id },
+        files: svc.contentScripts,
+      });
+    } catch (_) {
+      /* page not injectable – the registered content script covers it */
+    }
+  }
+}
+
+/** Applies the stored settings to the service registry and keeps the
+ *  dynamically registered Jellyfin content script in sync with them. */
+async function syncJellyfin() {
+  WatcharrServices.applySettings(await getSettings());
+  await registerJellyfinContentScript();
+  await injectJellyfinIntoOpenTabs();
 }
 
 /** plex.tv OAuth flow in progress (pin awaiting authorization). */
@@ -201,6 +326,7 @@ async function handleMessage(msg, sender) {
           threshold: s.threshold || DEFAULT_SETTINGS.threshold,
           // "" = no explicit language -> caller falls back to browser language.
           language: s.language || "",
+          jellyfinUrl: s.jellyfinUrl || "",
           configured: !!(s.watcharrUrl && s.token),
         },
       };
@@ -209,6 +335,7 @@ async function handleMessage(msg, sender) {
     case "watcharr:saveSettings": {
       const s = await getSettings();
       const next = { ...s };
+      let jellyfinChanged = false;
       if (msg.settings) {
         if (typeof msg.settings.enabled === "boolean")
           next.enabled = msg.settings.enabled;
@@ -222,9 +349,20 @@ async function handleMessage(msg, sender) {
         if (["en", "de", "fr"].includes(msg.settings.language)) {
           next.language = msg.settings.language;
         }
+        // Self-hosted Jellyfin server – stored normalized, so that a typo
+        // like a trailing slash or a missing scheme cannot break matching.
+        if (typeof msg.settings.jellyfinUrl === "string") {
+          next.jellyfinUrl = WatcharrServices.normalizeServerUrl(
+            msg.settings.jellyfinUrl,
+          );
+          jellyfinChanged = true;
+        }
       }
       await saveSettings(next);
-      return { ok: true };
+      if (jellyfinChanged) await syncJellyfin();
+      // Echo the normalized Jellyfin URL back so the options page can show
+      // exactly what is used for tab matching (and detect invalid input).
+      return { ok: true, jellyfinUrl: next.jellyfinUrl || "" };
     }
 
     case "watcharr:logout": {
@@ -276,6 +414,7 @@ async function handleMessage(msg, sender) {
     // -- History page (Comparison Service ↔ Watcharr) ---------------
     case "watcharr:history:load":
       try {
+        WatcharrHistory.setSource("service");
         WatcharrHistory.setService(msg.service);
         WatcharrHistory.setOldestFirst(msg.oldestFirst === true);
         const data = await WatcharrHistory.load();
@@ -285,6 +424,31 @@ async function handleMessage(msg, sender) {
           total: data.total,
           done: data.done,
           cancelled: !!data.cancelled,
+          source: data.source,
+          file: data.file,
+        };
+      } catch (err) {
+        return toErrorResponse(err);
+      }
+
+    case "watcharr:history:loadFile":
+      // Import path: the list is filled from a previously exported CSV/JSON file
+      // instead of the open service tab. Matching/selection/import are unchanged.
+      try {
+        WatcharrHistory.setOldestFirst(msg.oldestFirst === true);
+        const data = await WatcharrHistory.loadFromFile(
+          msg.text || "",
+          msg.filename || "",
+        );
+        return {
+          ok: true,
+          items: data.items,
+          total: data.total,
+          done: data.done,
+          cancelled: !!data.cancelled,
+          source: data.source,
+          file: data.file,
+          fileTotal: data.fileTotal,
         };
       } catch (err) {
         return toErrorResponse(err);
@@ -323,14 +487,44 @@ async function handleMessage(msg, sender) {
         return toErrorResponse(err);
       }
 
+    case "watcharr:history:export": {
+      // Writes the COMPLETE history of the selected service to a file (done on
+      // the history page) and optionally adds the TMDB data of every entry –
+      // resolved through Watcharr's TMDB search. Nothing is written to
+      // Watcharr itself: this is an export, not an import.
+      try {
+        WatcharrHistory.setService(msg.service);
+        const data = await WatcharrHistory.collectForExport({
+          enrich: msg.enrich === true,
+        });
+        return {
+          ok: true,
+          rows: data.rows,
+          total: data.total,
+          done: !!data.done,
+          truncated: !!data.truncated,
+          enriched: !!data.enriched,
+          matched: data.matched || 0,
+          cancelled: !!data.cancelled,
+        };
+      } catch (err) {
+        return toErrorResponse(err);
+      }
+    }
+
     case "watcharr:history:cancel":
-      // Abort a running "oldest first" full-history load.
+      // Abort a running "oldest first" full-history load / file export.
       WatcharrHistory.cancelHistoryLoad();
       return { ok: true };
 
     case "watcharr:history:progress":
-      // Entries fetched so far while the "oldest first" full load is running.
-      return { ok: true, loaded: WatcharrHistory.getLoadProgress() };
+      // Entries fetched so far while the "oldest first" full load or a file
+      // export is running; `export` additionally reports the export phase.
+      return {
+        ok: true,
+        loaded: WatcharrHistory.getLoadProgress(),
+        export: WatcharrHistory.getExportProgress(),
+      };
 
     // Amazon Prime Video history API calls. They are routed through the
     // background because the content script's own fetch is bound by the page's
@@ -367,4 +561,11 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       sendResponse(toErrorResponse(err));
     });
   return true; // keep the message channel open for the async response
+});
+
+// Keep the service registry (Jellyfin server) and the dynamically registered
+// Jellyfin content script in sync with the stored settings. Runs on every
+// background start (Firefox event page / Chrome service-worker wake-up).
+syncJellyfin().catch((err) => {
+  console.error("[watcharr-scrobbler] Jellyfin setup failed:", err);
 });

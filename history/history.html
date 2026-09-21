@@ -228,6 +228,10 @@
     <script src="../i18n/formatters.js"></script>
     <script src="../i18n/index.js"></script>
     <script src="../background/services.js"></script>
+    <!-- Import/export feature: the export side is needed here to serialize the
+         rows into the CSV/JSON text of the downloaded file (the import side
+         runs in the background, where the file is parsed). -->
+    <script src="../content/importexport/export-content.js"></script>
     <script src="history.js"></script>
   </body>
 </html>

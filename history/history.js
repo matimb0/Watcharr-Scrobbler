@@ -39,10 +39,20 @@ const ERROR_KEYS = {
   not_configured: "history.error.notConfigured",
   no_service_tab: "history.error.noServiceTab",
   service_tab_prepare: "history.error.serviceTabPrepare",
+  service_not_configured: "history.error.serviceNotConfigured",
   no_service_response: "history.error.noResponse",
   auth_failed: "history.error.authFailed",
   no_match: "history.error.noMatch",
   create_failed: "history.error.createFailed",
+  export_running: "history.error.exportRunning",
+  history_busy: "history.error.historyBusy",
+  file_unreadable: "history.error.fileUnreadable",
+  file_empty: "history.error.fileEmpty",
+  tmdb_not_found: "history.error.tmdbNotFound",
+  // Jellyfin (content/jellyfin/jellyfin-content.js)
+  jellyfin_not_logged_in: "history.error.jellyfinNotLoggedIn",
+  jellyfin_unavailable: "history.error.jellyfinUnavailable",
+  jellyfin_api_failed: "history.error.jellyfinApiFailed",
 };
 
 // TMDB multi-search result types shown in the "change match" popover.
@@ -82,6 +92,12 @@ async function applyLanguage(lang) {
   currentLanguage = I18NApi.resolveLanguage(lang);
   await I18NApi.applyTranslations(currentLanguage, document);
   document.documentElement.lang = currentLanguage;
+  // Labels that depend on the CURRENT state (display order, matching mode,
+  // file mode) are not part of the static data-i18n sweep – refresh them here
+  // so they follow a language change as well.
+  updateOrderBtn();
+  updateMatchModeBtn();
+  updateSourceUI();
 }
 
 const els = {
@@ -92,10 +108,22 @@ const els = {
   filterBox: $("#filterBox"),
   importBtn: $("#importBtn"),
   orderBtn: $("#orderBtn"),
+  orderLabel: $("#orderLabel"),
+  fileBtn: $("#fileBtn"),
+  fileInput: $("#fileInput"),
+  backBtn: $("#backBtn"),
   matchModeBtn: $("#matchModeBtn"),
+  matchModeLabel: $("#matchModeLabel"),
   confirmModal: $("#confirmModal"),
   orderOkBtn: $("#orderOkBtn"),
   orderCancelBtn: $("#orderCancelBtn"),
+  exportBtn: $("#exportBtn"),
+  exportModal: $("#exportModal"),
+  exportProgress: $("#exportProgress"),
+  exportOkBtn: $("#exportOkBtn"),
+  exportCancelBtn: $("#exportCancelBtn"),
+  exportEnrich: $("#exportEnrich"),
+  exportEnrichHint: $("#exportEnrichHint"),
   serviceBtn: $("#serviceBtn"),
   pageTitle: $("#pageTitle"),
   pageSubtitle: $("#pageSubtitle"),
@@ -113,6 +141,7 @@ const TMDB_IMG = "https://image.tmdb.org/t/p/w185";
 let items = []; // current (filtered) view
 let allItems = []; // all loaded items
 let filter = "";
+let fileName = ""; // name of the loaded file (file mode only)
 const PREFETCH_THRESHOLD = 5; // reload when only this many rows are left at bottom
 let total = 0; // number of titles loaded so far
 let allLoaded = false; // complete Netflix history loaded?
@@ -120,6 +149,10 @@ let loadingMore = false; // currently loading more?
 // Lock while an initial full load is running (e.g. switching to "oldest
 // first"): blocks infinite scroll / parallel loads until it has finished.
 let loadingInitial = false;
+// Lock while the complete history is being exported to a file: the service
+// page crawl in the background belongs to the export, so no load may run at
+// the same time.
+let exporting = false;
 // Generation counter: incremented on every fresh load() so that a still
 // pending "load more" response from an older list can be discarded.
 let loadGen = 0;
@@ -130,6 +163,11 @@ let oldestFirst = false;
 // "recorded" when the FINISHED activity matches date AND time), false =
 // rough (only checks whether the episode is already watched/finished).
 let exactMatch = true;
+// Import from a file: while set, the list is fed by the loaded export instead
+// of the open service tab (`loadedFile` keeps the file content so that
+// switching the order can re-send it to the background).
+let fileMode = false;
+let loadedFile = null; // { text, name }
 
 function escapeHtml(s) {
   return String(s == null ? "" : s)
@@ -554,12 +592,25 @@ function updateImportButton() {
   els.importBtn.textContent = ts("history.importSelected", { count: n });
 }
 
-/** Updates the sort-order toggle in the toolbar (label = current order). */
+/** Sets label + "on" state of a toggle button in the top bar. The label lives
+ *  in its own span (the button also holds an icon), and `aria-pressed` tells
+ *  screen readers whether the toggle is currently active. */
+function setToggleState(btn, labelEl, text, pressed) {
+  if (labelEl) labelEl.textContent = text;
+  if (!btn) return;
+  btn.classList.toggle("active", !!pressed);
+  btn.setAttribute("aria-pressed", String(!!pressed));
+}
+
+/** Updates the sort-order toggle in the tool bar (label = current order).
+ *  The visible text lives in its own span, so the icon is kept. */
 function updateOrderBtn() {
-  els.orderBtn.textContent = ts(
-    oldestFirst ? "history.oldestFirst" : "history.newestFirst",
+  setToggleState(
+    els.orderBtn,
+    els.orderLabel,
+    ts(oldestFirst ? "history.oldestFirst" : "history.newestFirst"),
+    oldestFirst,
   );
-  els.orderBtn.classList.toggle("active", oldestFirst);
   els.orderBtn.title = ts("history.switchOrder", {
     mode: ts(oldestFirst ? "history.newestFirst" : "history.oldestFirst"),
   });
@@ -569,13 +620,15 @@ function updateOrderBtn() {
  * "Exact" is shown in the normal (neutral) style, "rough" is highlighted
  * in red to signal the less strict matching. */
 function updateMatchModeBtn() {
-  els.matchModeBtn.textContent = ts(
-    exactMatch ? "history.matchExact" : "history.matchRough",
+  setToggleState(
+    els.matchModeBtn,
+    els.matchModeLabel,
+    ts(exactMatch ? "history.matchExact" : "history.matchRough"),
+    !exactMatch,
   );
   els.matchModeBtn.title = ts(
     exactMatch ? "history.matchExactTitle" : "history.matchRoughTitle",
   );
-  els.matchModeBtn.classList.toggle("active", !exactMatch);
 }
 
 // Toggle between exact (date+time must match) and rough (episode finished?)
@@ -590,6 +643,99 @@ els.matchModeBtn.addEventListener("click", () => {
   }
   render();
 });
+
+// -- Source of the list: service history or an imported file -----------------
+// The page can either show the history crawled from the open service tab or an
+// imported export file. Both fill the same list; the background decides which
+// one a request belongs to (`setSource`).
+
+/** Request for the CURRENT source (service history or the loaded file). */
+function loadRequest() {
+  if (fileMode && loadedFile) {
+    return {
+      type: "watcharr:history:loadFile",
+      text: loadedFile.text,
+      filename: loadedFile.name,
+      oldestFirst,
+    };
+  }
+  return {
+    type: "watcharr:history:load",
+    oldestFirst,
+    service: serviceId,
+  };
+}
+
+/** Sets/clears file mode and keeps the affected controls in sync. */
+function setFileMode(on, name) {
+  fileMode = !!on;
+  fileName = fileMode ? name || fileName || "" : "";
+  updateSourceUI();
+}
+
+/** Shows/hides the file-mode controls (back button, export availability). */
+function updateSourceUI() {
+  if (els.backBtn) {
+    els.backBtn.classList.toggle("hidden", !fileMode);
+    // Short label in the bar, the descriptive text as tooltip.
+    els.backBtn.title = ts("history.backToService");
+  }
+  if (els.fileBtn) {
+    // "Load from file" and "Back" are two sides of the same switch: while an
+    // imported file is shown, the back button takes that slot.
+    els.fileBtn.classList.toggle("hidden", fileMode);
+    els.fileBtn.title = ts("history.loadFileTitle");
+  }
+  if (els.exportBtn) {
+    // Exporting always reads the SERVICE history – in file mode there is
+    // nothing to crawl, so the button is disabled (with an explanation).
+    els.exportBtn.disabled = fileMode;
+    els.exportBtn.title = fileMode ? ts("history.exportFileMode") : "";
+  }
+}
+
+/** Reads the chosen file and loads its entries into the list. */
+async function loadFile(file) {
+  if (!file || loadingInitial || exporting) return;
+  let text;
+  try {
+    text = await file.text();
+  } catch (err) {
+    setStatus(
+      "error",
+      ts("history.fileReadFailed", { error: err.message || String(err) }),
+    );
+    return;
+  }
+  const previous = loadedFile;
+  loadedFile = { text, name: file.name || "" };
+  fileMode = true;
+  fileName = file.name || ""; // shown in the header while the file loads
+  closeOrderConfirm(); // a pending order dialog belongs to the old list
+  updateSourceUI();
+  applyServiceHeader();
+  const ok = await load();
+  if (!ok) {
+    // Nothing was imported (unreadable/empty file, no Watcharr, …) – go back to
+    // the service list so the page does not stay in a broken file state.
+    loadedFile = previous;
+    fileMode = false;
+    updateSourceUI();
+    applyServiceHeader();
+  }
+}
+
+/** Leaves file mode and shows the service history again. */
+async function backToService() {
+  if (loadingInitial) return;
+  loadedFile = null;
+  fileMode = false;
+  fileName = "";
+  closeOrderConfirm();
+  updateSourceUI();
+  await applyServiceHeader();
+  load();
+}
 
 /** Clears the currently shown history so a stale list doesn't linger while a
  * new load runs. Shows `loadingText` as the only list hint; when `showCancel`
@@ -618,27 +764,27 @@ function clearList(loadingText, showCancel) {
 }
 
 async function load() {
-  if (loadingInitial) return; // a load is already in progress
+  if (loadingInitial || exporting) return false; // a load/export is running
   loadingInitial = true; // lock infinite scroll until this load finishes
   const gen = ++loadGen; // supersede any in-flight "load more" / older loads
   clearStatus();
   updateOrderBtn();
   const loadingMsg = await t(
-    oldestFirst ? "history.loadingHistoryOldest" : "history.loadingHistory",
+    fileMode
+      ? "history.loadingFile"
+      : oldestFirst
+        ? "history.loadingHistoryOldest"
+        : "history.loadingHistory",
   );
   setStatus("info", loadingMsg);
   // Remove the previously displayed history; for the long "oldest first"
   // load offer a button to abort it and show the fetch progress.
   clearList(loadingMsg, oldestFirst);
-  if (oldestFirst) startProgressPolling();
+  if (oldestFirst) startProgressPolling("list");
   let ok = false;
   try {
-    const resp = await browser.runtime.sendMessage({
-      type: "watcharr:history:load",
-      oldestFirst,
-      service: serviceId,
-    });
-    if (gen !== loadGen) return; // superseded – a newer load owns the state
+    const resp = await browser.runtime.sendMessage(loadRequest());
+    if (gen !== loadGen) return false; // superseded – a newer load owns the state
     if (resp && resp.cancelled) {
       // User aborted the "oldest first" full load -> fall back to the
       // default (newest first) order and load normally again.
@@ -646,17 +792,25 @@ async function load() {
       updateOrderBtn();
       loadingInitial = false; // release the lock so the reload can start
       load();
-      return;
+      return false;
     }
     if (!resp || !resp.ok)
       throw new Error(await describeError(resp, "history.loadingFailed"));
     ok = true;
+    // The background reports the source of the delivered list – this is the
+    // single source of truth for file mode (a service load clears it).
+    setFileMode(resp.source === "file", resp.file || "");
     allItems = resp.items || [];
     total = resp.total != null ? resp.total : allItems.length;
     allLoaded = !!resp.done;
     render();
     clearStatus();
-    if (allLoaded) {
+    if (fileMode) {
+      setStatus(
+        "success",
+        await t("history.fileLoaded", { count: total, file: fileName }),
+      );
+    } else if (allLoaded) {
       setStatus(
         "success",
         total
@@ -682,11 +836,12 @@ async function load() {
       if (ok) maybeLoadMore();
     }
   }
+  return ok;
 }
 
 /** Loads the next part of history (infinite scroll, 20-step increments). */
 async function loadMore() {
-  if (loadingMore || allLoaded || loadingInitial) return;
+  if (loadingMore || allLoaded || loadingInitial || exporting) return;
   loadingMore = true;
   const gen = loadGen;
   updateHint();
@@ -734,24 +889,31 @@ function maybeLoadMore() {
   }
 }
 
-// -- Load progress ("oldest first" full load) ------------------------------
+// -- Load progress ("oldest first" full load / file export) -----------------
 // While the complete history is being fetched, the page polls the background
 // once per second and shows how many entries have been fetched by then
-// (e.g. "Already 340 entries loaded").
+// (e.g. "Already 340 entries loaded"). The progress is shown either on the
+// list hint of the running load or inside the export dialog.
 let progressTimer = null;
+let progressActive = false;
+let progressMode = "list"; // "list" (history load) | "export" (file export)
 const PROGRESS_POLL_MS = 1000;
 
 function stopProgressPolling() {
+  progressActive = false;
   if (progressTimer) {
     clearInterval(progressTimer);
     progressTimer = null;
   }
 }
 
-function startProgressPolling() {
+/** Starts the progress polling for a running load ("list") or export. */
+function startProgressPolling(mode) {
   stopProgressPolling();
+  progressMode = mode === "export" ? "export" : "list";
+  progressActive = true;
   progressTimer = setInterval(async () => {
-    if (!loadingInitial || !oldestFirst) {
+    if (!progressActive) {
       stopProgressPolling();
       return;
     }
@@ -760,7 +922,7 @@ function startProgressPolling() {
         type: "watcharr:history:progress",
       });
       if (resp && resp.ok && typeof resp.loaded === "number") {
-        updateLoadingProgress(resp.loaded);
+        updateLoadingProgress(resp.loaded, resp.export);
       }
     } catch (_) {
       /* transient – next tick retries */
@@ -768,8 +930,26 @@ function startProgressPolling() {
   }, PROGRESS_POLL_MS);
 }
 
-/** Shows how many entries have been fetched so far on the loading hint. */
-function updateLoadingProgress(loaded) {
+/** Shows how many entries have been fetched so far (list hint or export dialog).
+ *  During an export the `exportInfo` detail distinguishes the two phases:
+ *  crawling the service history vs. adding the TMDB data via Watcharr. */
+function updateLoadingProgress(loaded, exportInfo) {
+  if (progressMode === "export") {
+    if (!els.exportProgress) return;
+    let text = "";
+    if (exportInfo && exportInfo.phase === "match") {
+      text = ts("history.exportMatching", {
+        done: exportInfo.processed || 0,
+        total: exportInfo.total || 0,
+      });
+    } else if (loaded) {
+      text = ts("history.exportProgress", { count: loaded });
+    }
+    if (!text) return; // keep the generic message until the first page
+    els.exportProgress.textContent = text;
+    els.exportProgress.classList.remove("hidden");
+    return;
+  }
   if (!loaded) return; // keep the generic loading message until the first page
   const h = els.list.querySelector(".list-hint");
   if (h) h.textContent = ts("history.loadedSoFar", { count: loaded });
@@ -830,8 +1010,12 @@ els.confirmModal.addEventListener("click", (e) => {
   if (e.target === els.confirmModal) closeOrderConfirm();
 });
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && !els.confirmModal.classList.contains("hidden")) {
+  if (e.key !== "Escape") return;
+  if (!els.confirmModal.classList.contains("hidden")) {
     closeOrderConfirm();
+  } else if (!exporting && !els.exportModal.classList.contains("hidden")) {
+    // Esc does not close the export dialog while the crawl is running.
+    closeExportDialog();
   }
 });
 
@@ -1073,7 +1257,221 @@ els.importBtn.addEventListener("click", async () => {
   }
 });
 
+// -- Export of the complete history into a file -------------------------------
+// Like "oldest first", the export fetches the COMPLETE history of the current
+// service and writes it into a CSV or JSON file. Nothing is imported into
+// Watcharr. Optionally every entry is additionally resolved against TMDB
+// through the Watcharr instance – those TMDB columns are what makes the file
+// importable by other services. The dialog stays open while the export runs,
+// shows the progress and offers an abort button.
+//
+// The row shape and the file serialization live with the rest of the
+// import/export feature in content/importexport/export-content.js (global
+// `WatcharrExport`); the page only picks the format, downloads the text and
+// shows the progress.
+
+/** File name of the export, e.g. "watcharr-scrobbler-netflix-2026-09-16.csv". */
+function exportFilename(format) {
+  return WatcharrExport.filename(serviceId, format);
+}
+
+/** Chosen export format ("csv" | "json") from the dialog. */
+function selectedExportFormat() {
+  const checked = document.querySelector('input[name="exportFormat"]:checked');
+  return checked && checked.value === "json" ? "json" : "csv";
+}
+
+/** CSV text of the export rows (RFC 4180, see export-content.js). */
+function rowsToCsv(rows) {
+  return WatcharrExport.toCsv(rows);
+}
+
+/** JSON text of the export rows, with the metadata header of this export. */
+function rowsToJson(rows) {
+  const svc = WatcharrServices.byId(serviceId);
+  return WatcharrExport.toJson(rows, svc ? svc.name : serviceId);
+}
+
+/** Triggers the download of a generated text file (blob URL, no permission). */
+function downloadTextFile(filename, text, mime) {
+  const url = URL.createObjectURL(new Blob([text], { type: mime }));
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.rel = "noopener";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+}
+
+/** The TMDB enrichment can only run with a configured Watcharr connection:
+ *  the TMDB search is proxied by the Watcharr instance. Keeps the checkbox in
+ *  sync with the connection state when the dialog is opened. */
+async function syncExportEnrichOption() {
+  if (!els.exportEnrich) return;
+  let configured = false;
+  try {
+    const state = await browser.runtime.sendMessage({
+      type: "watcharr:getState",
+    });
+    configured = !!(
+      state &&
+      state.ok &&
+      state.settings &&
+      state.settings.configured
+    );
+  } catch (_) {
+    /* no answer – keep the option disabled and explain why */
+  }
+  els.exportEnrich.disabled = !configured;
+  if (!configured) els.exportEnrich.checked = false;
+  if (els.exportEnrichHint) {
+    els.exportEnrichHint.textContent = ts(
+      configured ? "history.exportEnrichHint" : "history.exportNoWatcharr",
+    );
+  }
+}
+
+function openExportDialog() {
+  // One crawl at a time; an imported file is not a service history.
+  if (loadingInitial || exporting || fileMode) return;
+  els.exportProgress.classList.add("hidden");
+  els.exportProgress.textContent = "";
+  els.exportOkBtn.disabled = false;
+  els.exportOkBtn.textContent = ts("history.exportStart");
+  els.exportCancelBtn.disabled = false;
+  els.exportCancelBtn.textContent = ts("history.cancel");
+  els.exportModal.classList.remove("hidden");
+  syncExportEnrichOption(); // async – the dialog is usable meanwhile
+  els.exportOkBtn.focus();
+}
+
+function closeExportDialog() {
+  els.exportModal.classList.add("hidden");
+}
+
+/** Fetches the complete history in the background and writes it to a file. */
+async function runExport() {
+  if (exporting || fileMode) return;
+  exporting = true;
+  const format = selectedExportFormat();
+  const enrich = !!(els.exportEnrich && els.exportEnrich.checked);
+  const svc = WatcharrServices.byId(serviceId);
+  // Keep the dialog open as a progress display (with abort) while crawling.
+  els.exportOkBtn.disabled = true;
+  els.exportProgress.classList.remove("hidden");
+  els.exportProgress.textContent = ts("history.exportRunning", {
+    service: svc ? svc.name : "",
+  });
+  els.exportCancelBtn.textContent = ts("history.exportAbort");
+  startProgressPolling("export");
+  const file = exportFilename(format);
+  try {
+    const resp = await browser.runtime.sendMessage({
+      type: "watcharr:history:export",
+      service: serviceId,
+      enrich,
+    });
+    if (resp && resp.cancelled) {
+      showStatusPopup(
+        "info",
+        await t("history.exportCancelled", {
+          count: (resp.rows || []).length,
+        }),
+      );
+      return;
+    }
+    if (!resp || !resp.ok)
+      throw new Error(await describeError(resp, "history.exportFailed"));
+    const rows = resp.rows || [];
+    if (!rows.length) {
+      setStatus("info", await t("history.emptyHistory"));
+      return;
+    }
+    if (format === "json") {
+      downloadTextFile(file, rowsToJson(rows), "application/json");
+    } else {
+      // BOM so Excel detects UTF-8 (umlauts/accents in titles).
+      downloadTextFile(
+        file,
+        "\uFEFF" + rowsToCsv(rows),
+        "text/csv;charset=utf-8",
+      );
+    }
+    // The safety cap of the crawl may have cut the history short – say so
+    // instead of pretending that everything was exported.
+    if (resp.truncated) {
+      showStatusPopup(
+        "info",
+        await t("history.exportTruncated", { count: rows.length }),
+      );
+    } else if (resp.enriched) {
+      // Report how many rows actually carry TMDB data – the rest can only be
+      // matched by title/year at the target service.
+      const matched = resp.matched || rows.filter((r) => r.tmdbId).length;
+      showStatusPopup(
+        "success",
+        await t("history.exportDoneEnriched", {
+          count: rows.length,
+          matched,
+          unmatched: rows.length - matched,
+        }),
+      );
+    } else {
+      showStatusPopup(
+        "success",
+        await t("history.exportDone", { count: rows.length }),
+      );
+    }
+  } catch (err) {
+    setStatus("error", err.message);
+  } finally {
+    stopProgressPolling();
+    exporting = false;
+    closeExportDialog();
+  }
+}
+
+els.exportBtn.addEventListener("click", openExportDialog);
+els.exportOkBtn.addEventListener("click", runExport);
+els.exportCancelBtn.addEventListener("click", async () => {
+  if (!exporting) {
+    closeExportDialog();
+    return;
+  }
+  // Abort the crawl – the pending response then comes back as "cancelled".
+  els.exportCancelBtn.disabled = true;
+  els.exportProgress.textContent = ts("history.exportAborting");
+  try {
+    await browser.runtime.sendMessage({ type: "watcharr:history:cancel" });
+  } catch (_) {
+    /* the crawl may already have finished */
+  }
+});
+// Click on the backdrop closes the dialog (not while an export is running).
+els.exportModal.addEventListener("click", (e) => {
+  if (e.target === els.exportModal && !exporting) closeExportDialog();
+});
+
 els.reloadBtn.addEventListener("click", load);
+
+// -- Import from a file -------------------------------------------------------
+// Fills the list from a previously exported history file (CSV/JSON) instead of
+// the open service tab; the rows are then matched and imported as usual.
+els.fileBtn.addEventListener("click", () => {
+  if (loadingInitial || exporting) return; // one load at a time
+  els.fileInput.click();
+});
+
+els.fileInput.addEventListener("change", async () => {
+  const file = els.fileInput.files && els.fileInput.files[0];
+  // Let the same file be picked again later (change event would not fire).
+  els.fileInput.value = "";
+  if (file) await loadFile(file);
+});
+
+els.backBtn.addEventListener("click", backToService);
 
 // Infinite Scroll: load more as soon as only PREFETCH_THRESHOLD rows are
 // left until the bottom of the viewport.
@@ -1086,8 +1484,18 @@ window.addEventListener("scroll", () => {
   }
 });
 
-/** Sets the header title/subtitle to the selected service. */
+/** Sets the header title/subtitle to the selected service (or to the loaded
+ *  file while the page is in file-import mode). */
 async function applyServiceHeader() {
+  if (fileMode) {
+    if (els.pageTitle) els.pageTitle.textContent = await t("history.fileTitle");
+    if (els.pageSubtitle) {
+      els.pageSubtitle.textContent = await t("history.fileSubtitle", {
+        file: fileName || "—",
+      });
+    }
+    return;
+  }
   const svc = WatcharrServices.byId(serviceId);
   const name = svc ? svc.name : "";
   if (els.pageTitle)
@@ -1110,7 +1518,9 @@ function renderServiceToggle(available) {
   const btn = els.serviceBtn;
   if (!btn) return;
   const svc = WatcharrServices.byId(serviceId);
-  if (!svc || !serviceAvailable || availableServices.length === 0) {
+  // In file-import mode there is no service to switch to – the provider
+  // button would only be confusing ("Back to service history" does that).
+  if (fileMode || !svc || !serviceAvailable || availableServices.length === 0) {
     btn.classList.add("hidden");
     return;
   }
@@ -1137,7 +1547,9 @@ function renderServiceToggle(available) {
 async function detectServices() {
   const available = [];
   for (const svc of WatcharrServices.list) {
-    if (svc.hasHistory === false) continue;
+    // Skips services without a configured server (self-hosted Jellyfin until
+    // its URL is set in the settings).
+    if (!WatcharrServices.hasHistory(svc)) continue;
     try {
       const tabs = await browser.tabs.query({ url: svc.urlPattern });
       if (tabs.some((t) => t.id != null)) available.push(svc);
@@ -1165,7 +1577,7 @@ async function detectServices() {
 /** No service tab is open – the history cannot be loaded. */
 async function showNoService() {
   const names = WatcharrServices.list
-    .filter((s) => s.hasHistory !== false)
+    .filter((s) => WatcharrServices.hasHistory(s))
     .map((s) => s.name)
     .join(" / ");
   const msg = await t("history.noServiceTab", { services: names });
@@ -1181,6 +1593,10 @@ async function showNoService() {
 async function switchProvider(id) {
   serviceId = id;
   serviceAvailable = true;
+  // Leaving file mode: the provider button always loads service history.
+  loadedFile = null;
+  fileMode = false;
+  updateSourceUI();
   applyServiceHeader();
   renderServiceToggle(availableServices);
   // A different service = a completely different history.
@@ -1201,6 +1617,12 @@ async function refreshProviders() {
   const { available, chosen } = await detectServices();
   availableServices = available;
   const hadService = serviceAvailable;
+
+  // File-import mode: tab events must not replace the imported list.
+  if (fileMode) {
+    renderServiceToggle(available);
+    return;
+  }
 
   if (!chosen) {
     // No service tab is open – hide the toggle (keep the current view).
@@ -1264,6 +1686,19 @@ function bindTabEvents() {
 }
 
 async function initHistory() {
+  // The Jellyfin server URL is part of the settings and defines the service's
+  // tab pattern – load it before any service detection runs.
+  try {
+    const state = await browser.runtime.sendMessage({
+      type: "watcharr:getState",
+    });
+    if (state && state.ok && window.WatcharrServices) {
+      WatcharrServices.applySettings(state.settings);
+    }
+  } catch (_) {
+    /* unconfigured services are simply skipped below */
+  }
+
   const locale = window.watcharrI18nLocale
     ? await window.watcharrI18nLocale.fetchLocale()
     : "en";
@@ -1271,6 +1706,7 @@ async function initHistory() {
 
   updateOrderBtn();
   updateMatchModeBtn();
+  updateSourceUI();
 
   // Header provider button: with a second service available it toggles
   // between the providers (otherwise it only shows the current one).

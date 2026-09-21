@@ -63,6 +63,10 @@ async function refresh() {
   const s = stateResp && stateResp.ok ? stateResp.settings : null;
   if (!s) return;
 
+  // The Jellyfin server URL is part of the settings and feeds the service's
+  // tab matching – apply it before the active tab is classified below.
+  if (window.WatcharrServices) WatcharrServices.applySettings(s);
+
   const lang = I18NApi.resolveLanguage(s.language || "");
   await applyLanguage(lang);
 

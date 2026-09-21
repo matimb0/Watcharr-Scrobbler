@@ -16,6 +16,13 @@
  * scripts that are injected on demand (into tabs that were already open)
  * also run the polyfill first. Firefox does not need the polyfill.
  *
+ * Fixed domains (Netflix, Prime Video) are matched through the static
+ * `urlTest` / `urlPattern` and listed in the manifest's `content_scripts`.
+ * Jellyfin is self-hosted: its descriptors (`urlTest`, `urlPattern`,
+ * `serverUrl`) are filled in at runtime from the configured server URL
+ * (WatcharrServices.applySettings) and its content script is registered
+ * dynamically in the background (browser.scripting.registerContentScripts).
+ *
  * Service names are proper nouns and therefore identical in every locale.
  */
 (function () {
@@ -47,6 +54,38 @@
       ],
       hasHistory: true,
     },
+    {
+      id: "jellyfin",
+      name: "Jellyfin",
+      // Jellyfin is SELF-HOSTED: there is no fixed domain to match, so the
+      // server URL is configured by the user (Options) and applied at runtime
+      // via WatcharrServices.applySettings({ jellyfinUrl }). Until a server is
+      // configured `urlTest`/`urlPattern` stay null and the service is simply
+      // invisible to tab detection.
+      urlTest: null,
+      urlPattern: null,
+      serverUrl: "",
+      contentScripts: [
+        "content/jellyfin/jellyfin-content.js",
+      ],
+      hasHistory: true,
+      /** True when `url` belongs to the configured Jellyfin server (host AND
+       *  base path – Jellyfin may run behind a reverse proxy sub-path). */
+      matchesUrl(url) {
+        if (!this.serverUrl || !url) return false;
+        try {
+          const u = new URL(url);
+          const base = new URL(this.serverUrl);
+          if (u.origin !== base.origin) return false;
+          const bp = base.pathname.replace(/\/+$/, "");
+          return (
+            bp === "" || u.pathname === bp || u.pathname.startsWith(bp + "/")
+          );
+        } catch (_) {
+          return false;
+        }
+      },
+    },
   ];
 
   /** Returns the service descriptor for an id, or null. */
@@ -69,10 +108,74 @@
   function byUrl(url) {
     if (!url) return null;
     const h = host(url);
-    return list.find((s) => s.urlTest.test(h)) || null;
+    return (
+      list.find((s) =>
+        typeof s.matchesUrl === "function"
+          ? s.matchesUrl(url)
+          : s.urlTest && s.urlTest.test(h),
+      ) || null
+    );
   }
 
-  const api = { list, byId, byUrl, host };
+  /**
+   * Normalizes a user-entered Jellyfin server URL to `origin + base path`
+   * (no trailing slash). Returns "" for an empty or unusable value.
+   * Examples: "192.168.1.10:8096" -> "http://192.168.1.10:8096",
+   *           "https://jelly.example.com/jellyfin/" -> "https://jelly.example.com/jellyfin".
+   */
+  function normalizeServerUrl(raw) {
+    let s = String(raw == null ? "" : raw).trim();
+    if (!s) return "";
+    if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(s)) s = "http://" + s;
+    let u;
+    try {
+      u = new URL(s);
+    } catch (_) {
+      return "";
+    }
+    if (u.protocol !== "http:" && u.protocol !== "https:") return "";
+    if (!u.hostname) return "";
+    const path = u.pathname.replace(/\/+$/, "");
+    return u.origin + path;
+  }
+
+  /** Sets the Jellyfin server used for tab matching (see above). */
+  function setJellyfinServer(rawUrl) {
+    const svc = byId("jellyfin");
+    if (!svc) return;
+    const base = normalizeServerUrl(rawUrl);
+    svc.serverUrl = base;
+    svc.urlPattern = base ? base + "/*" : null;
+  }
+
+  /** Applies the persisted settings to the in-memory service descriptors.
+   *  Every context that uses WatcharrServices (background, popup, history
+   *  page, options) calls this with the settings it just loaded. */
+  function applySettings(settings) {
+    setJellyfinServer(settings && settings.jellyfinUrl);
+  }
+
+  /** True when the service can be looked up in open tabs (has a URL pattern). */
+  function hasTabPattern(svc) {
+    return !!svc && typeof svc.urlPattern === "string" && svc.urlPattern !== "";
+  }
+
+  /** True when the service contributes to the history page. */
+  function hasHistory(svc) {
+    return !!svc && svc.hasHistory !== false && hasTabPattern(svc);
+  }
+
+  const api = {
+    list,
+    byId,
+    byUrl,
+    host,
+    applySettings,
+    setJellyfinServer,
+    normalizeServerUrl,
+    hasTabPattern,
+    hasHistory,
+  };
 
   // Expose on whatever global object this file is loaded into (extension
   // page window, Firefox event page, Chrome service worker).

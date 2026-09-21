@@ -14,6 +14,8 @@
 importScripts(
   "../lib/browser-polyfill.min.js",
   "services.js",
+  "../content/importexport/import-content.js",
+  "../content/importexport/export-content.js",
   "watcharr-client.js",
   "history.js",
   "background.js",

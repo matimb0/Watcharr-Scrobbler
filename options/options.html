@@ -17,7 +17,7 @@
         <div>
           <h1 data-i18n="page.title">Watcharr Scrobbler</h1>
           <p class="subtitle" data-i18n="page.subtitle">
-            Scrobble Netflix &amp; Amazon Prime Video → Watcharr
+            Scrobble Netflix, Amazon Prime Video &amp; Jellyfin → Watcharr
           </p>
         </div>
       </header>
@@ -147,8 +147,8 @@
               >Scrobbling enabled</strong
             >
             <p class="hint" data-i18n="settings.scrobblingHint">
-              Automatically add movies/shows from Netflix &amp; Amazon Prime Video
-              to Watcharr.
+              Automatically add movies/shows from Netflix, Amazon Prime Video
+              and Jellyfin to Watcharr.
             </p>
           </div>
           <label class="switch">
@@ -193,10 +193,34 @@
       </section>
 
       <section class="card">
+        <h2 data-i18n="settings.jellyfinSection">Jellyfin server</h2>
+        <div id="jellyfin-banner" class="banner hidden"></div>
+
+        <div class="field">
+          <label for="jellyfinUrl" data-i18n="settings.jellyfinUrlLabel"
+            >Jellyfin server URL</label
+          >
+          <input
+            type="url"
+            id="jellyfinUrl"
+            placeholder="http://192.168.1.10:8096"
+            autocomplete="url"
+            spellcheck="false"
+          />
+          <p class="hint" data-i18n="settings.jellyfinUrlHint">
+            Base URL of your Jellyfin server (e.g. http://192.168.1.10:8096).
+            Log in to Jellyfin in this browser – the extension uses that
+            session, so no separate login or API key is needed.
+          </p>
+        </div>
+      </section>
+
+      <section class="card">
         <h2 data-i18n="settings.howItWorks">How it works</h2>
         <ol class="steps">
           <li data-i18n="settings.step1">
-            Open Netflix or Amazon Prime Video and start a movie or series.
+            Open Netflix, Amazon Prime Video or your Jellyfin server and start a
+            movie or series.
           </li>
           <li data-i18n="settings.step2">
             The add-on detects the title, season, and episode from the

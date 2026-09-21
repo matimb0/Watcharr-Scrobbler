@@ -4,23 +4,26 @@ A browser extension (Firefox and Chrome) that works like the
 [Universal Trakt Scrobbler](https://github.com/trakt-tools/universal-trakt-scrobbler) –
 but **only for your own, self-hosted [Watcharr](https://github.com/sbondCo/Watcharr)-instance**.
 
-**Current status:** **Netflix** and **Amazon Prime Video** are integrated as services.
+**Current status:** **Netflix**, **Amazon Prime Video** and **Jellyfin** are
+integrated as services.
 
 <br>
 
 ## What it does
 
-- Automatically detects what is currently playing on Netflix or Amazon Prime
-  Video (movie or series, including season & episode).
+- Automatically detects what is currently playing on Netflix, Amazon Prime
+  Video or Jellyfin (movie or series, including season & episode).
 - Searches for the title via your Watcharr instance (TMDB search) and adds it to your watchlist.
+  For Jellyfin the TMDB ID reported by the server is used directly when available.
 - While you are watching, the entry remains **WATCHING**.
 - Once a movie or episode reaches the configurable threshold,
   it is marked as watched in Watcharr (**FINISHED**).
 - For series, the individual **episode** is marked as watched – Watcharr
   automatically updates the series status (“Automate Show Statuses”).
-- **History page:** Import your previous viewing history (Netflix or Amazon
-  Prime Video) in a controlled way – with comparison, match correction, and
-  selective import (movies as watched series episodes individually).
+- **History page:** Import your previous viewing history (Netflix, Amazon
+  Prime Video or Jellyfin) in a controlled way – with comparison, match
+  correction, and selective import (movies as watched series episodes
+  individually).
 
 <br>
 
@@ -66,7 +69,13 @@ but **only for your own, self-hosted [Watcharr](https://github.com/sbondCo/Watch
      asks the server via `GET /api/auth/available`). Jellyfin uses username &
      password, Plex opens a plex.tv popup for the OAuth login.
 4. Optional: Adjust the scrobbling threshold (e.g. 90% if only the ending should count).
-5. Open Netflix or Amazon Prime Video and get started 🍿
+5. **Jellyfin (optional):** Enter the **base URL of your Jellyfin server**
+   (e.g. `http://192.168.1.10:8096`) in the “Jellyfin server” section and press
+   Enter. Then just log in to Jellyfin in the browser – the extension reuses
+   that session (access token + user from the web client), so no second login
+   and no API key is needed. The content script is registered for exactly that
+   server and injected into already-open Jellyfin tabs.
+6. Open Netflix, Amazon Prime Video or your Jellyfin server and get started 🍿
 
 You can see the status and progress at any time in the **Popup**.
 
@@ -76,11 +85,62 @@ You can see the status and progress at any time in the **Popup**.
 
 The **History page** (Popup → **“History”**) gives you full
 Control similar to Universal Trakt Scrobbler: a **side-by-side comparison** of each
-watched title (Netflix or Amazon Prime Video – the service is selected
+watched title (Netflix, Amazon Prime Video or Jellyfin – the service is selected
 automatically from the open tab) with the automatically found **Watcharr match**,
 including **match correction** and **selective import**. No separate
 synchronization is required – the page loads the history directly from the open
 service tab.
+
+<br>
+
+## History export
+
+**“Export …”** on the history page writes the **complete viewing history** of
+the current service (Netflix, Amazon Prime Video or Jellyfin) into a file – nothing is
+imported into Watcharr. Choose **CSV** or **JSON**:
+
+| Column | Meaning |
+| --- | --- |
+| `service` / `serviceId` | Netflix, Amazon Prime Video or Jellyfin |
+| `title`, `type`, `year` | Title as reported by the service (`type` = `movie` \| `tv`) |
+| `season`, `episode` | Only for series (empty for movies) |
+| `watchedAt` | Watch date/time (ISO-8601, UTC) |
+| `tmdbId`, `tmdbType`, `tmdbTitle`, `tmdbYear` | Added optionally (see below) |
+
+With **“Add TMDB data via Watcharr”** (enabled by default) every entry is
+additionally matched against TMDB **through your Watcharr instance** – the
+identical entries of a series share one lookup. The resulting `tmdbId` +
+`tmdbType` + `season`/`episode` + `watchedAt` combination is what other
+services (Trakt, Simkl, Letterboxd, …) expect for an import, so the file can be
+handed over there directly. Entries that cannot be matched keep empty TMDB
+columns and can still be imported by title/year.
+
+The export crawls the whole history, so it can take a moment; progress is shown
+in the dialog and the export can be aborted at any time. Without the TMDB
+option the export needs no Watcharr connection at all.
+
+<br>
+
+## History import from a file
+
+**“Load from file …”** on the history page fills the list from a previously
+exported **CSV or JSON** file instead of the open service tab. Everything else
+stays the same: the entries are matched against Watcharr, shown side by side,
+and the selected ones can be imported with **“Import selected”**.
+
+- Rows that carry **TMDB data** are matched on exactly that TMDB ID (the ID is
+  looked up through Watcharr, which also returns whether the title is already
+  in your watchlist – so nothing is created twice). Rows whose TMDB ID cannot
+  be resolved are marked and can be corrected manually via **“Change match”**.
+- Rows **without** TMDB data are matched by title/year like a service history.
+- The file order does not matter: entries are sorted by their watch date
+  (newest first), exactly like a service history, so **Newest/Oldest first**
+  behaves identically.
+- Besides our own export, other column spellings are understood
+  (`name`, `seasonNumber`/`episodeNumber`, `watched_date`, nested
+  `ids.tmdb`, `Film`/`Series` type names, …).
+- **“Back to service history”** returns to the history of the open service tab;
+  **Export** is only available for the service history.
 
 <br>
 

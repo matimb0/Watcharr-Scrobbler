@@ -39,6 +39,8 @@ const els = {
   stepsText: $("#stepsText"),
   banner: $("#status-banner"),
   generalBanner: $("#general-banner"),
+  jellyfinBanner: $("#jellyfin-banner"),
+  jellyfinUrl: $("#jellyfinUrl"),
   historyBtn: $("#historyBtn"),
   methodField: $("#methodField"),
   providerGroup: $("#providerGroup"),
@@ -80,6 +82,12 @@ function showBanner(kind, text) {
 function showGeneralBanner(kind, text) {
   els.generalBanner.className = "banner " + kind;
   els.generalBanner.textContent = text;
+}
+
+function showJellyfinBanner(kind, text) {
+  if (!els.jellyfinBanner) return;
+  els.jellyfinBanner.className = "banner " + kind;
+  els.jellyfinBanner.textContent = text;
 }
 
 function clearBanner() {
@@ -288,6 +296,7 @@ async function load() {
   els.threshold.value = s.threshold || 90;
   els.thresholdValue.value = s.threshold + " %";
   els.stepsThreshold.textContent = s.threshold || 90;
+  if (els.jellyfinUrl) els.jellyfinUrl.value = s.jellyfinUrl || "";
   await updateStepText(s.threshold || 90);
 
   if (configured) {
@@ -533,6 +542,35 @@ async function saveBehaviour() {
   await updateStepText(parseInt(els.threshold.value, 10));
 }
 
+/* ---------- Jellyfin server (self-hosted service) ---------- */
+
+/**
+ * Stores the Jellyfin server URL. The background normalizes it and keeps the
+ * dynamically registered Jellyfin Content Script in sync (see
+ * background/background.js – syncJellyfin); the normalized value is echoed
+ * back here so the field shows exactly what is used for tab matching.
+ */
+async function saveJellyfinUrl() {
+  if (!els.jellyfinUrl) return;
+  const typed = els.jellyfinUrl.value.trim();
+  const resp = await browser.runtime.sendMessage({
+    type: "watcharr:saveSettings",
+    settings: { jellyfinUrl: typed },
+  });
+  if (!resp || !resp.ok) {
+    showJellyfinBanner("error", await t("settings.error.generic"));
+    return;
+  }
+  const normalized = resp.jellyfinUrl || "";
+  els.jellyfinUrl.value = normalized;
+  if (typed && !normalized) {
+    // The background could not make sense of the value (no usable http(s) URL).
+    showJellyfinBanner("error", await t("settings.jellyfinInvalid"));
+    return;
+  }
+  showJellyfinBanner("success", await t("settings.jellyfinSaved"));
+}
+
 els.historyBtn.addEventListener("click", () => {
   browser.tabs.create({ url: browser.runtime.getURL("history/history.html") });
 });
@@ -577,5 +615,15 @@ els.language.addEventListener("change", async () => {
 els.password.addEventListener("keydown", (e) => {
   if (e.key === "Enter") login();
 });
+
+if (els.jellyfinUrl) {
+  els.jellyfinUrl.addEventListener("change", saveJellyfinUrl);
+  els.jellyfinUrl.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      saveJellyfinUrl();
+    }
+  });
+}
 
 load();

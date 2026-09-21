@@ -1,7 +1,7 @@
 {
   "page": {
     "title": "Watcharr Scrobbler",
-    "subtitle": "Netflix & Amazon Prime Video → Watcharr scrobbeln",
+    "subtitle": "Netflix, Amazon Prime Video & Jellyfin → Watcharr scrobbeln",
     "settingsTitle": "Watcharr Scrobbler – Einstellungen"
   },
   "settings": {
@@ -19,14 +19,14 @@
     "logout": "Abmelden",
     "scrobbling": "Scrobbeln",
     "scrobblingEnabled": "Scrobbeln aktiviert",
-    "scrobblingHint": "Fügt Filme/Serien automatisch aus Netflix und Amazon Prime Video zu Watcharr hinzu.",
+    "scrobblingHint": "Fügt Filme/Serien automatisch aus Netflix, Amazon Prime Video und Jellyfin zu Watcharr hinzu.",
     "threshold": "Als gesehen markieren ab … % Fortschritt",
     "thresholdHint": "Wenn ein Film oder eine Folge diesen Fortschritt erreicht, wird er in Watcharr als gesehen markiert (FINISHED).",
     "history": "Verlauf",
     "historyHint": "Öffnet die Verlaufseite mit Gegenüberstellung, Korrektur und selektivem Import.",
     "historyBtn": "Verlauf öffnen",
     "howItWorks": "So funktioniert es",
-    "step1": "Öffne Netflix oder Amazon Prime Video und starte einen Film oder eine Serie.",
+    "step1": "Öffne Netflix, Amazon Prime Video oder deinen Jellyfin-Server und starte einen Film oder eine Serie.",
     "step2": "Das Add-on erkennt Titel, Staffel und Folge über den Player bzw. die Metadata-API des Dienstes.",
     "step3": "Es sucht den Titel über deine Watcharr-Instanz (TMDB-ID) und fügt ihn deiner Watchlist hinzu (<em>WATCHING</em>).",
     "step4Before": "Wenn ein Film/eine Folge bis zu ≥",
@@ -56,6 +56,11 @@
     "plexTimeout": "Die Plex-Anmeldung ist abgelaufen – bitte erneut versuchen.",
     "plexPopupBlocked": "Das Plex-Popup konnte nicht geöffnet werden. Bitte erlaube Popups für diese Seite.",
     "missingUrl": "Bitte gib zuerst deine Watcharr-URL ein.",
+    "jellyfinSection": "Jellyfin-Server",
+    "jellyfinUrlLabel": "Jellyfin-Server-URL",
+    "jellyfinUrlHint": "Basis-URL deines Jellyfin-Servers (z. B. http://192.168.1.10:8096). Melde dich in diesem Browser bei Jellyfin an – die Extension nutzt diese Sitzung, ein separates Login oder ein API-Key ist nicht nötig.",
+    "jellyfinSaved": "Jellyfin-Server gespeichert.",
+    "jellyfinInvalid": "Das sieht nicht nach einer gültigen http(s)-URL aus – bitte gib die Basis-URL deines Jellyfin-Servers ein.",
     "error": {
       "generic": "Ein unbekannter Fehler ist aufgetreten.",
       "connection": "Verbindung zu Watcharr fehlgeschlagen: {reason}",
@@ -67,7 +72,7 @@
   },
   "popup": {
     "nowPlaying": "Aktuell auf {service}",
-    "noService": "Öffne Netflix oder Amazon Prime Video und starte einen Film oder eine Serie – im Popup erscheint dann der Fortschritt.",
+    "noService": "Öffne Netflix, Amazon Prime Video oder Jellyfin und starte einen Film oder eine Serie – im Popup erscheint dann der Fortschritt.",
     "notConfigured": "Nicht konfiguriert.",
     "notConfiguredDetail": "Verbinde deine Watcharr-Instanz in den Einstellungen.",
     "scrobblingActive": "Scrobbeln aktiv",
@@ -93,7 +98,7 @@
   },
   "toolbar": {
     "openSettings": "Einstellungen öffnen",
-    "openService": "Netflix oder Amazon Prime Video öffnen"
+    "openService": "Netflix, Amazon Prime Video oder Jellyfin öffnen"
   },
   "history": {
     "title": "Watcharr Scrobbler – Verlauf",
@@ -101,6 +106,15 @@
     "pageSubtitle": "Gegenüberstellung {service} ↔ Watcharr",
     "switchProviderTitle": "Verlauf von {service}. Klicken, um zu {target} zu wechseln.",
     "reload": "Neu laden",
+    "loadFile": "Aus Datei laden …",
+    "loadFileTitle": "Eine zuvor exportierte Verlaufsdatei (CSV oder JSON) nach Watcharr importieren.",
+    "backToService": "Zurück zum Dienst-Verlauf",
+    "backShort": "Zurück",
+    "fileTitle": "Datei-Import",
+    "fileSubtitle": "{file} → Watcharr",
+    "fileLoaded": "{count} Einträge aus „{file}“ geladen.",
+    "fileReadFailed": "Die Datei konnte nicht gelesen werden: {error}",
+    "loadingFile": "Datei wird importiert …",
     "selectAll": "Alle auswählen",
     "selectNone": "Keine auswählen",
     "oldestFirst": "Älteste zuerst",
@@ -119,6 +133,25 @@
     "switchToOldest": "Zu „Älteste zuerst“ wechseln",
     "filterPlaceholder": "Filtern …",
     "importSelected": "Ausgewählte importieren ({count})",
+    "exportBtn": "Exportieren …",
+    "exportTitle": "Kompletten Verlauf exportieren?",
+    "exportText": "Der komplette Verlauf wird einmal geladen und in eine Datei geschrieben. Bei einem sehr großen Verlauf kann das einen Moment dauern und viele Anfragen auslösen. Es wird nichts in Watcharr importiert.",
+    "exportFormatLabel": "Format",
+    "exportFileMode": "Exportieren ist nur für den Dienst-Verlauf möglich, nicht für eine importierte Datei.",
+    "exportEnrichLabel": "TMDB-Daten über Watcharr ergänzen",
+    "exportEnrichHint": "Jeder Eintrag wird über deine Watcharr-Instanz bei TMDB gesucht (TMDB-ID, Typ, Titel, Jahr) – mit diesen Spalten lässt sich die Datei leicht bei anderen Anbietern importieren.",
+    "exportNoWatcharr": "Watcharr ist nicht verbunden, daher können keine TMDB-Daten ergänzt werden. Die Datei wird nur mit den Rohdaten des Dienstes exportiert.",
+    "exportMatching": "TMDB-Daten werden über Watcharr zugeordnet: {done} / {total} …",
+    "exportStart": "Exportieren",
+    "exportAbort": "Export abbrechen",
+    "exportRunning": "Kompletter {service}-Verlauf wird geladen …",
+    "exportProgress": "Bereits {count} Einträge gelesen …",
+    "exportAborting": "Wird abgebrochen …",
+    "exportCancelled": "Export abgebrochen (bereits {count} Einträge gelesen).",
+    "exportDone": "{count} Einträge exportiert.",
+    "exportDoneEnriched": "{count} Einträge exportiert, {matched} mit TMDB-Daten ({unmatched} ohne).",
+    "exportTruncated": "{count} Einträge exportiert – die Sicherheitsgrenze des Ladevorgangs hat den Export gestoppt; der Verlauf enthält eventuell weitere Einträge.",
+    "exportFailed": "Export fehlgeschlagen.",
     "loadingHistory": "Verlauf wird geladen …",
     "loadingMore": "Weitere Einträge werden geladen …",
     "allLoaded": "Alle {total} Einträge geladen.",
@@ -166,10 +199,19 @@
       "notConfigured": "Watcharr ist nicht konfiguriert. Bitte melde dich zuerst in den Einstellungen an.",
       "noServiceTab": "Kein offener {service}-Tab gefunden. Öffne {service} und melde dich an.",
       "serviceTabPrepare": "Der {service}-Tab konnte nicht vorbereitet werden. Bitte lade die {service}-Seite neu und versuche es erneut. ({reason})",
+      "serviceNotConfigured": "Für {service} ist noch keine Server-URL konfiguriert. Bitte trage sie in den Einstellungen ein.",
       "noResponse": "Keine Antwort vom Dienst-Tab empfangen.",
       "authFailed": "Authentifizierung fehlgeschlagen – bitte erneut anmelden.",
       "noMatch": "keine Übereinstimmung in Watcharr",
-      "createFailed": "Erstellen fehlgeschlagen (keine watched-ID in der Antwort)."
+      "createFailed": "Erstellen fehlgeschlagen (keine watched-ID in der Antwort).",
+      "exportRunning": "Es läuft bereits ein Export.",
+      "historyBusy": "Der Verlauf wird gerade geladen. Bitte versuche es gleich noch einmal.",
+      "fileUnreadable": "Die Datei konnte nicht gelesen werden. Erwartet wird CSV oder JSON.",
+      "fileEmpty": "Die Datei enthält keine verwendbaren Einträge.",
+      "tmdbNotFound": "Die TMDB-Daten aus der Datei wurden in Watcharr nicht gefunden – bitte die Zuordnung manuell wählen.",
+      "jellyfinNotLoggedIn": "Keine Jellyfin-Anmeldung gefunden. Bitte melde dich in diesem Browser bei Jellyfin an und lade die Seite neu.",
+      "jellyfinUnavailable": "Der Jellyfin-Server konnte nicht erreicht werden.",
+      "jellyfinApiFailed": "Die Jellyfin-API hat einen Fehler zurückgegeben."
     }
   }
 }

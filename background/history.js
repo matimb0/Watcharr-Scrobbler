@@ -21,6 +21,10 @@ const WatcharrHistory = (() => {
   // Safety cap for "oldest first" mode: the services normally end with an
   // empty page much earlier – this only guards against an endless loop.
   const MAX_HISTORY_PAGES = 500;
+  // Parallel Watcharr/TMDB lookups while enriching an export. Watcharr proxies
+  // the TMDB search; 4 parallel requests finish a large history quickly
+  // without hammering the instance.
+  const EXPORT_MATCH_CONCURRENCY = 4;
 
   let items = []; // all entries loaded so far (1 service view = 1 row)
   const itemMap = new Map(); // lookup for fast item.key -> item; important for larger histories
@@ -42,9 +46,29 @@ const WatcharrHistory = (() => {
   // Set while a (long) "oldest first" full-history load is running so that
   // the user can abort it via the button on the history page.
   let cancelRequested = false;
+  // Running file export of the complete history (same page crawl as the
+  // "oldest first" full load, but WITHOUT any Watcharr lookup – an export
+  // therefore also works without a configured Watcharr connection).
+  let exportRunning = false;
+  // Entries collected by the running export (progress display).
+  let exportCount = 0;
+  // Progress detail of the running export: phase ("collect" while crawling the
+  // service pages, "match" while adding TMDB data via Watcharr), how many rows
+  // have been looked up, how many of them were matched and the row total.
+  let exportPhase = "";
+  let exportProcessed = 0;
+  let exportMatched = 0;
+  let exportTotal = 0;
 
   // Service whose history is currently being loaded (id from WatcharrServices).
   let serviceId = "netflix";
+  // Where the current list comes from: "service" (crawled from the open
+  // service tab) or "file" (entries read from an exported CSV/JSON file).
+  let source = "service";
+  // Parsed entries of the loaded file (only used while source === "file").
+  let fileRows = [];
+  // Name of the loaded file (shown on the history page).
+  let fileName = "";
   // Identifies one fresh history load. It is passed to the content scripts so
   // that paged services (Amazon Prime Video) can reset their internal history
   // buffer when a new load starts. Netflix ignores it.
@@ -85,6 +109,12 @@ const WatcharrHistory = (() => {
     if (WatcharrServices.byId(id)) serviceId = id;
   }
 
+  /** Chooses where the next load comes from: the open service tab ("service")'
+   *  or a previously exported file ("file"). */
+  function setSource(v) {
+    source = v === "file" ? "file" : "service";
+  }
+
   /** Requests that a running "oldest first" full-history load be aborted. */
   function cancelHistoryLoad() {
     cancelRequested = true;
@@ -97,7 +127,19 @@ const WatcharrHistory = (() => {
    * via browser.scripting. Returns the tab ID or throws an error.
    */
   async function ensureServiceTab() {
+    // The Jellyfin server URL is part of the settings – applying them here
+    // makes the service's tab pattern available in the background context.
+    WatcharrServices.applySettings(await getSettings());
     const svc = WatcharrServices.byId(serviceId) || WatcharrServices.list[0];
+    if (!WatcharrServices.hasTabPattern(svc)) {
+      logErr("ensureServiceTab: no server configured for", svc && svc.id);
+      throw userError(
+        "service_not_configured",
+        (svc && svc.name ? svc.name : "The service") +
+          " is not configured yet. Add its server URL in the settings.",
+        { service: svc && svc.name ? svc.name : "" },
+      );
+    }
     log("ensureServiceTab: searching for open", svc.name, "tabs …");
     const tabs = await browser.tabs.query({ url: svc.urlPattern });
     const candidates = tabs.filter((t) => t.id != null);
@@ -130,9 +172,11 @@ const WatcharrHistory = (() => {
 
     // No tab with running Content Script: inject afterwards.
     const www =
-      candidates.find((t) =>
-        svc.urlTest.test(WatcharrServices.host(t.url || "")),
-      ) || candidates[0];
+      (svc.urlTest &&
+        candidates.find((t) =>
+          svc.urlTest.test(WatcharrServices.host(t.url || "")),
+        )) ||
+      candidates[0];
     log(
       "ensureServiceTab: injecting Content Script in tab",
       www.id,
@@ -183,7 +227,13 @@ const WatcharrHistory = (() => {
       // is surfaced through the translated generic wrapper in the UI; the
       // generic code is only used when there is genuinely no reply.
       const reason = (resp && resp.error) || "";
-      if (reason) throw new Error(reason);
+      if (reason){
+        const e = new Error(reason);
+        // Content scripts may attach a stable code (e.g. Jellyfin's
+        // "jellyfin_not_logged_in") that the history page translates.
+        e.userCode = (resp && resp.errorCode) || null;
+        throw e;
+      }
       throw userError(
         "no_service_response",
         "No response from the service tab received.",
@@ -201,6 +251,31 @@ const WatcharrHistory = (() => {
     return { entries, done: !!resp.done };
   }
 
+  /**
+   * Returns one page of entries for the CURRENT source:
+   *  - "service": fetched from the open service tab (Content Script),
+   *  - "file":    slice of the loaded file – all entries are already in
+   *               memory, so paging is purely local and instant.
+   * The rest of the module (matching, batching, import) does not need to know
+   * where an entry came from.
+   */
+  async function entriesForPage(pageIndex) {
+    if (source !== "file") return historyPage(pageIndex);
+    const start = pageIndex * BATCH_SIZE;
+    const slice = fileRows.slice(start, start + BATCH_SIZE);
+    log(
+      "entriesForPage (file): page",
+      pageIndex,
+      "->",
+      slice.length,
+      "entries of",
+      fileRows.length,
+    );
+    return {
+      entries: slice.map(fileRowToEntry),
+      done: start + BATCH_SIZE >= fileRows.length,
+    };
+  }
   /**
    * Normalizes a watched date coming from the content script to an ISO-8601
    * string. Never assume a `Date` instance survives the message channel:
@@ -239,6 +314,9 @@ const WatcharrHistory = (() => {
           ? entry.episode
           : null
         : null,
+      // TMDB data known in advance (imported file): the row is then matched on
+      // exactly this TMDB ID instead of guessing by title/year.
+      tmdbHint: entry.tmdbHint || null,
       match: null,
       matchError: null,
       matchErrorCode: null,
@@ -275,6 +353,68 @@ const WatcharrHistory = (() => {
     // exact title match first
     for (const r of pool) if (norm(r.name) === norm(title)) return r;
     return pool[0] || null;
+  }
+
+  /** Finds the search result carrying exactly this TMDB ID (or null). */
+  function pickByTmdbId(results, tmdbId) {
+    const want = Number(tmdbId);
+    if (!Number.isInteger(want)) return null;
+    for (const r of results) {
+      if (r && r.ids && Number(r.ids.tmdb) === want) return r;
+    }
+    return null;
+  }
+
+  /**
+   * Resolves a row whose TMDB ID is already known (imported file). The title
+   * from the file is searched through Watcharr and the result with EXACTLY the
+   * file's TMDB ID is used – no guessing by title, and no fallback to a
+   * different medium. The search result also carries the Watcharr state
+   * (`watched`), which the import needs to update an existing entry instead of
+   * creating a duplicate. Returns null when the ID cannot be resolved (the UI
+   * then offers "Change match" for that row).
+   */
+  async function resolveMatchByTmdbId(it) {
+    const hint = it.tmdbHint;
+    if (!hint || hint.tmdbId == null) return null;
+    // Try the TMDB title first, then the title reported by the service.
+    const names = [];
+    if (hint.title) names.push(hint.title);
+    if (it.title && normTitle(hint.title) !== normTitle(it.title)) {
+      names.push(it.title);
+    }
+    const queries = [];
+    const push = (q) => {
+      if (q && queries.indexOf(q) === -1) queries.push(q);
+    };
+    for (const n of names) {
+      if (hint.year) push(n + " year:" + hint.year);
+      else if (it.year) push(n + " year:" + it.year);
+      push(n);
+    }
+    const s = await getSettings();
+    const c = new WatcharrClient(s);
+    for (const q of queries) {
+      let results = [];
+      try {
+        const data = await c.search(q, "multi");
+        results = (data && data.results) || [];
+      } catch (e) {
+        logErr("resolveMatchByTmdbId: search failed for", q, "->", e.message);
+        continue; // a failed query must not abort the whole lookup
+      }
+      const hit = pickByTmdbId(results, hint.tmdbId);
+      if (hit) {
+        log(
+          "resolveMatchByTmdbId: TMDB",
+          hint.tmdbId,
+          "resolved via",
+          JSON.stringify(q),
+        );
+        return resultToMatch(hit);
+      }
+    }
+    return null;
   }
 
   function resultToMatch(result) {
@@ -409,6 +549,15 @@ const WatcharrHistory = (() => {
     it.episodeStatusKnown = true;
   }
 
+  /**
+   * Flattens one service entry into the row shape of a history export.
+   * The shape itself lives with the rest of the export code in
+   * content/importexport/export-content.js (global `WatcharrExport`).
+   */
+  function entryToExportRow(entry, svc) {
+    return WatcharrExport.entryToExportRow(entry, svc);
+  }
+
   function serializeItem(it) {
     return {
       key: it.key,
@@ -438,6 +587,9 @@ const WatcharrHistory = (() => {
    */
   async function load() {
     log("load: starting history load for", serviceId);
+    // The service page crawl of a running export must not be interleaved.
+    if (exportRunning)
+      throw userError("export_running", "An export is already running.");
     const s = await getSettings();
     if (!s.watcharrUrl || !s.token) {
       logErr(
@@ -478,6 +630,10 @@ const WatcharrHistory = (() => {
       total: res.total,
       done: res.done,
       cancelled: !!res.cancelled,
+      // Where this list came from (the page shows the file name in file mode).
+      source,
+      file: source === "file" ? fileName : "",
+      fileTotal: source === "file" ? fileRows.length : 0,
     };
   }
 
@@ -489,20 +645,24 @@ const WatcharrHistory = (() => {
     loadErrorCode = null;
     log("fetchMore: loading", serviceId, "page", page);
     try {
-      const { entries, done: d } = await historyPage(page);
-      if (d) {
-        done = true;
-        log("fetchMore: last page reached, total", total, "entries");
-        return { items: [], total, done };
-      }
+      const { entries, done: d } = await entriesForPage(page);
       const newItems = entries.slice(0, limit).map(entryToItem);
-      log("fetchMore: resolving matches for", newItems.length, "entries …");
-      await Promise.all(newItems.map((it) => resolveItem(it)));
-      items.push(...newItems);
-      for (const it of newItems) itemMap.set(it.key, it);
-      total = items.length;
-      page++;
-      log("fetchMore: +" + newItems.length + " entries (total " + total + ")");
+      if (newItems.length) {
+        log("fetchMore: resolving matches for", newItems.length, "entries …");
+        await Promise.all(newItems.map((it) => resolveItem(it)));
+        items.push(...newItems);
+        for (const it of newItems) itemMap.set(it.key, it);
+        total = items.length;
+        page++;
+        log(
+          "fetchMore: +" + newItems.length + " entries (total " + total + ")",
+        );
+      }
+      // The last page of a service may STILL carry entries (`done` together
+      // with rows – Amazon Prime Video ends its history with a partial page),
+      // so the rows of that page are taken along before stopping.
+      done = !!d || entries.length === 0;
+      if (done) log("fetchMore: last page reached, total", total, "entries");
       return { items: newItems.map(serializeItem), total, done };
     } finally {
       loading = false;
@@ -523,20 +683,21 @@ const WatcharrHistory = (() => {
     try {
       log("loadEntireHistory: loading complete", serviceId, "history …");
       let pages = 0;
-      while (!done && pages < MAX_HISTORY_PAGES && !cancelRequested) {
-        const { entries, done: d } = await historyPage(page);
+      while (!done && pages < maxPages() && !cancelRequested) {
+        const { entries, done: d } = await entriesForPage(page);
         if (cancelRequested) break; // user aborted while the page was fetched
-        if (d || !entries.length) {
-          done = true;
-          break;
+        if (entries.length) {
+          for (const entry of entries) {
+            const it = entryToItem(entry);
+            items.push(it);
+            itemMap.set(it.key, it);
+          }
+          page++;
+          pages++;
         }
-        for (const entry of entries) {
-          const it = entryToItem(entry);
-          items.push(it);
-          itemMap.set(it.key, it);
-        }
-        page++;
-        pages++;
+        // Stop after an empty page or when the service reports the end – a
+        // final partial page (done + rows, e.g. Amazon Prime Video) is kept.
+        if (d || !entries.length) done = true;
       }
       if (cancelRequested) {
         log("loadEntireHistory: aborted by user");
@@ -578,14 +739,282 @@ const WatcharrHistory = (() => {
     };
   }
 
-  /** Number of Netflix entries fetched so far (for the load-progress display). */
+  /** Number of service entries fetched so far (progress display). While an
+   *  export is running it reports the collected entries, otherwise the
+   *  entries fetched by the running history load. */
   function getLoadProgress() {
-    return items.length;
+    return exportRunning ? exportCount : items.length;
+  }
+
+  /** Progress DETAIL of the running export (phase + match counters) so the UI
+   *  can distinguish "crawling the history" from "adding TMDB data". */
+  function getExportProgress() {
+    return {
+      running: exportRunning,
+      phase: exportPhase,
+      processed: exportProcessed,
+      matched: exportMatched,
+      total: exportTotal,
+    };
+  }
+
+  /**
+   * Resolves ONE export row against TMDB – through the user's Watcharr
+   * instance, which proxies the TMDB search (same path the history matching
+   * uses). Returns the match (TMDB ID, type, title, poster, year) or null.
+   *
+   * `cache` holds one Promise per "title|year|type": every episode of the same
+   * series shares one lookup, so a long history only needs a handful of
+   * requests.
+   */
+  function lookupExportTmdb(row, client, cache) {
+    const key = normTitle(row.title) + "|" + (row.year || "") + "|" + row.type;
+    if (cache.has(key)) return cache.get(key);
+    const p = (async () => {
+      // Same two-step query as the history matching: first with the year, then
+      // a plain title search as fallback.
+      const queries = row.year
+        ? [row.title + " year:" + row.year, row.title]
+        : [row.title];
+      for (const q of queries) {
+        let results = [];
+        try {
+          const data = await client.search(q, "multi");
+          results = (data && data.results) || [];
+        } catch (e) {
+          // A single failed lookup must not abort the whole export – the row
+          // simply stays without TMDB data.
+          logErr(
+            "lookupExportTmdb: search failed for",
+            row.title,
+            "->",
+            e.message,
+          );
+          return null;
+        }
+        const match = resultToMatch(
+          pickBest(results, row.title, row.type === "tv"),
+        );
+        if (match) return match;
+      }
+      return null;
+    })();
+    cache.set(key, p);
+    return p;
+  }
+
+  /** Writes the TMDB data of a match into an export row. */
+  function applyTmdbToRow(row, match) {
+    if (!match) return;
+    const y = match.year != null ? parseInt(String(match.year), 10) : NaN;
+    row.tmdbId = match.tmdbId;
+    row.tmdbType = match.contentType;
+    row.tmdbTitle = match.name || null;
+    row.tmdbYear = isNaN(y) ? null : y;
+  }
+
+  /**
+   * Adds TMDB data (ID, type, title, year) to all export rows by searching
+   * through the Watcharr instance. Runs with limited concurrency so a large
+   * history does not flood the Watcharr instance; `cancelRequested` aborts it.
+   */
+  async function enrichExportRows(rows, client) {
+    const cache = new Map();
+    let next = 0;
+    const worker = async () => {
+      while (next < rows.length && !cancelRequested) {
+        const row = rows[next++];
+        const match = await lookupExportTmdb(row, client, cache);
+        if (cancelRequested) return;
+        applyTmdbToRow(row, match);
+        if (match) exportMatched++;
+        exportProcessed++;
+      }
+    };
+    const workers = [];
+    const n = Math.min(EXPORT_MATCH_CONCURRENCY, rows.length);
+    for (let w = 0; w < n; w++) workers.push(worker());
+    await Promise.all(workers);
+  }
+
+  /**
+   * Loads the COMPLETE history of the selected service for a FILE EXPORT and –
+   * optionally – adds the TMDB data of every entry (resolved through the
+   * Watcharr instance), so the file can be imported by other services.
+   *
+   * Walks the same pages as `loadEntireHistory()`, but never writes anything
+   * to Watcharr: no watched entry is created, no import happens. Without
+   * `options.enrich` the export needs no Watcharr connection at all.
+   * `getLoadProgress()` / `getExportProgress()` report the progress,
+   * `cancelHistoryLoad()` aborts crawl and matching.
+   */
+  async function collectForExport(options) {
+    const enrich = !!(options && options.enrich);
+    if (exportRunning)
+      throw userError("export_running", "An export is already running.");
+    if (loading)
+      throw userError(
+        "history_busy",
+        "The history is currently being loaded – please try again afterwards.",
+      );
+    // Fail fast: without a Watcharr connection no TMDB lookup is possible.
+    // Better than crawling the whole history first and failing afterwards.
+    let client = null;
+    if (enrich) {
+      const s = await getSettings();
+      if (!s.watcharrUrl || !s.token)
+        throw userError(
+          "not_configured",
+          "Watcharr is not configured – TMDB data cannot be added.",
+        );
+      client = new WatcharrClient(s);
+    }
+    const svc = WatcharrServices.byId(serviceId) || WatcharrServices.list[0];
+    exportRunning = true;
+    exportCount = 0;
+    exportPhase = "collect";
+    exportProcessed = 0;
+    exportMatched = 0;
+    exportTotal = 0;
+    cancelRequested = false;
+    // Fresh load id: paged content scripts (Amazon Prime Video) reset their
+    // internal buffer, so the export crawls the history from the top.
+    historyLoadId++;
+    log(
+      "collectForExport: collecting complete",
+      svc && svc.id,
+      "history …",
+      enrich ? "(with TMDB data via Watcharr)" : "(without TMDB data)",
+    );
+    const rows = [];
+    try {
+      let finished = false;
+      let pages = 0;
+      let pageIndex = 0;
+      while (!finished && pages < MAX_HISTORY_PAGES && !cancelRequested) {
+        const { entries, done: d } = await historyPage(pageIndex);
+        if (cancelRequested) break; // user aborted while the page was fetched
+        for (const entry of entries) rows.push(entryToExportRow(entry, svc));
+        exportCount = rows.length;
+        // The last page of a service may still carry entries (`done` + rows,
+        // e.g. Amazon Prime Video) – so only an empty page is a sure end.
+        finished = !!d || entries.length === 0;
+        pageIndex++;
+        pages++;
+      }
+      exportTotal = rows.length;
+      // Phase 2: TMDB data for the collected rows (optional).
+      if (enrich && rows.length && !cancelRequested) {
+        exportPhase = "match";
+        log("collectForExport: resolving TMDB data for", rows.length, "rows …");
+        await enrichExportRows(rows, client);
+        log(
+          "collectForExport: TMDB data for",
+          exportMatched,
+          "/",
+          rows.length,
+          "rows",
+        );
+      }
+      if (cancelRequested) {
+        log("collectForExport: aborted by user after", rows.length, "entries");
+        return { cancelled: true, rows, total: rows.length };
+      }
+      log("collectForExport: done –", rows.length, "entries collected");
+      // `truncated` = the safety cap stopped the crawl before the service
+      // reported the end of the history (the UI warns about it).
+      return {
+        rows,
+        total: rows.length,
+        done: true,
+        truncated: !finished,
+        enriched: enrich,
+        matched: exportMatched,
+      };
+    } finally {
+      exportRunning = false;
+      exportPhase = "";
+    }
+  }
+
+  // -- Import from a file (export → import into Watcharr) ---------------------
+  // Instead of the open service tab, the list can be filled from a previously
+  // exported CSV/JSON file (see `collectForExport`). The file parsing lives
+  // with the rest of the import/export feature in
+  // content/importexport/import-content.js (global `WatcharrImportExport`);
+  // the parsed rows are turned into the very same entries a service history
+  // delivers, so matching, selection and the import into Watcharr work
+  // unchanged. Files that carry TMDB IDs are matched on exactly those IDs.
+
+  /** Parses a previously exported history file (CSV or JSON) into rows.
+   *  Throws when the file is malformed JSON / has no usable entries. */
+  function parseExportFile(text) {
+    return WatcharrImportExport.parse(text);
+  }
+
+  /** Converts one normalized file row into a service-style entry. */
+  function fileRowToEntry(row) {
+    return WatcharrImportExport.toEntry(row);
+  }
+
+  /** Orders file rows newest → oldest, exactly like a service history delivers
+   *  them (our own export writes them in that same order). */
+  function sortFileRowsNewestFirst(rows) {
+    return WatcharrImportExport.sortNewestFirst(rows);
+  }
+
+  /** Page cap of a full history crawl: guards the service crawl against an
+   *  endless loop; a loaded file simply has as many pages as it has entries. */
+  function maxPages() {
+    return source === "file"
+      ? Math.ceil(fileRows.length / BATCH_SIZE) + 1
+      : MAX_HISTORY_PAGES;
+  }
+
+  /**
+   * Loads the history from a FILE instead of the open service tab and enters
+   * file mode (`source = "file"`). From here on everything behaves as usual:
+   * the rows are matched against Watcharr, shown on the history page and the
+   * selected ones can be imported.
+   */
+  async function loadFromFile(text, name) {
+    if (exportRunning)
+      throw userError("export_running", "An export is already running.");
+    if (loading)
+      throw userError(
+        "history_busy",
+        "The history is currently being loaded – please try again afterwards.",
+      );
+    let rows;
+    try {
+      rows = parseExportFile(text);
+    } catch (e) {
+      logErr("loadFromFile: parsing failed ->", e.message);
+      throw userError(
+        "file_unreadable",
+        "The file could not be read: " + (e.message || String(e)),
+        { reason: e.message || String(e) },
+      );
+    }
+    if (!rows.length) {
+      throw userError(
+        "file_empty",
+        "The file contains no usable entries (CSV or JSON export expected).",
+      );
+    }
+    log("loadFromFile:", name || "(file)", "->", rows.length, "entries");
+    source = "file";
+    fileRows = sortFileRowsNewestFirst(rows);
+    fileName = name || "";
+    return await load();
   }
 
   /** For the history page: load next batch (inline errors instead of throw). */
   async function more() {
     try {
+      // While a file export crawls the history, the service page buffer in the
+      // content script belongs to the export – no interleaved page requests.
+      if (exportRunning) return { items: [], total, done };
       if (oldestFirst) {
         if (loading)
           return {
@@ -638,10 +1067,20 @@ const WatcharrHistory = (() => {
   async function resolveItem(it) {
     if (it.resolved) return;
     try {
-      const results = await searchWatcharr(it.title, it.year);
-      it.match = resultToMatch(pickBest(results, it.title, it.isTv));
-      it.matchError = it.match ? null : "no match in Watcharr";
-      it.matchErrorCode = it.match ? null : "no_match";
+      if (it.tmdbHint) {
+        // Imported file: the TMDB ID is known, so match exactly this entry
+        // instead of guessing by title/year.
+        it.match = await resolveMatchByTmdbId(it);
+        it.matchError = it.match
+          ? null
+          : "TMDB ID " + it.tmdbHint.tmdbId + " not found in Watcharr";
+        it.matchErrorCode = it.match ? null : "tmdb_not_found";
+      } else {
+        const results = await searchWatcharr(it.title, it.year);
+        it.match = resultToMatch(pickBest(results, it.title, it.isTv));
+        it.matchError = it.match ? null : "no match in Watcharr";
+        it.matchErrorCode = it.match ? null : "no_match";
+      }
       // Series: check if exactly THIS episode is already watched in Watcharr.
       await resolveItemEpisodeStatus(it);
     } catch (e) {
@@ -895,5 +1334,9 @@ const WatcharrHistory = (() => {
     setService,
     cancelHistoryLoad,
     getLoadProgress,
+    getExportProgress,
+    collectForExport,
+    loadFromFile,
+    setSource,
   };
 })();
