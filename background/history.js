@@ -318,8 +318,10 @@ const WatcharrHistory = (() => {
       if (reason) {
         const e = new Error(reason);
         // Content scripts may attach a stable code (e.g. Jellyfin's
-        // "jellyfin_not_logged_in") that the history page translates.
+        // "jellyfin_not_logged_in" or "network_blocked" with the blocked host)
+        // that the history page translates.
         e.userCode = (resp && resp.errorCode) || null;
+        e.userParams = (resp && resp.errorParams) || null;
         throw e;
       }
       throw userError(

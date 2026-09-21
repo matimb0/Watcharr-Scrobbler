@@ -112,7 +112,9 @@
     if (!v || typeof v.duration !== "number" || v.duration <= 100000) return v;
     return {
       currentTime:
-        typeof v.currentTime === "number" ? v.currentTime / 1000 : v.currentTime,
+        typeof v.currentTime === "number"
+          ? v.currentTime / 1000
+          : v.currentTime,
       duration: v.duration / 1000,
       progress: Math.min(100, (v.currentTime / v.duration) * 100),
       isPaused: v.paused,
@@ -401,7 +403,12 @@
       // The player UI can hide its title overlay (or the video can be between
       // two loads with a not-yet-finite duration) while the same video keeps
       // playing – then keep the current item instead of resetting the state.
-      if (!key && currentKey && items.has(currentKey) && (pb || videoElementExists())) {
+      if (
+        !key &&
+        currentKey &&
+        items.has(currentKey) &&
+        (pb || videoElementExists())
+      ) {
         key = currentKey;
       }
 
@@ -534,13 +541,19 @@
     });
     if (!resp || !resp.ok) {
       if (resp && resp.status) {
-        throw new Error(
-          "Amazon API request failed (HTTP " + resp.status + ")",
-        );
+        throw new Error("Amazon API request failed (HTTP " + resp.status + ")");
       }
-      throw new Error(
+      const err = new Error(
         (resp && resp.error) || "Amazon API request failed.",
       );
+      // The background names the host it was not allowed to reach. Carried as a
+      // stable code so the history page can translate it AND remember the host,
+      // asking for exactly that origin on the next "Reload" click.
+      if (resp && resp.blockedOrigin) {
+        err.userCode = "network_blocked";
+        err.userParams = { origin: resp.blockedOrigin };
+      }
+      throw err;
     }
     try {
       return JSON.parse(resp.text);
@@ -555,7 +568,8 @@
    */
   async function ensureApi() {
     if (api.active) return;
-    if (api.failed) throw api.error || new Error("Amazon session could not be activated.");
+    if (api.failed)
+      throw api.error || new Error("Amazon session could not be activated.");
 
     try {
       const configUrl =
@@ -564,14 +578,22 @@
         DEVICE_TYPE_ID +
         "&firmware=1&gascEnabled=false&version=1";
       const config = await amazonJson(configUrl);
-      const region = ((config.customerConfig && config.customerConfig.homeRegion) || "")
-        .toLowerCase();
-      const host = (config.territoryConfig && config.territoryConfig.defaultVideoWebsite) || api.hostUrl;
+      const region = (
+        (config.customerConfig && config.customerConfig.homeRegion) ||
+        ""
+      ).toLowerCase();
+      const host =
+        (config.territoryConfig &&
+          config.territoryConfig.defaultVideoWebsite) ||
+        api.hostUrl;
 
       api.hostUrl = host;
       api.apiUrl = host
         .replace("www.", "")
-        .replace("//", "//atv-ps" + (region === "na" ? "" : "-" + region) + ".");
+        .replace(
+          "//",
+          "//atv-ps" + (region === "na" ? "" : "-" + region) + ".",
+        );
 
       const apiPath = /https:\/\/(?:www\.)?amazon\./.test(host)
         ? "/gp/video/api"
@@ -596,6 +618,10 @@
           (err.message || String(err)) +
           ")",
       );
+      // Keep the stable code/params of the original failure (a blocked host is
+      // actionable in the UI – see amazonJson).
+      api.error.userCode = (err && err.userCode) || null;
+      api.error.userParams = (err && err.userParams) || null;
       throw api.error;
     }
   }
@@ -642,9 +668,10 @@
             seasonCat && typeof seasonCat.seasonNumber === "number"
               ? seasonCat.seasonNumber
               : null,
-          showTitle: showCat && showCat.title
-            ? showCat.title.replace(/ \[[\w.]+\/[\w.]+\]$/, "")
-            : null,
+          showTitle:
+            showCat && showCat.title
+              ? showCat.title.replace(/ \[[\w.]+\/[\w.]+\]$/, "")
+              : null,
         };
       } catch (_) {
         return null;
@@ -684,7 +711,7 @@
 
   async function fetchRawHistoryPage() {
     const args = historyState.nextToken
-      ? '%22nextToken%22%3A%22' + historyState.nextToken + "%22"
+      ? "%22nextToken%22%3A%22" + historyState.nextToken + "%22"
       : "";
     const data = await amazonJson(api.historyUrl.replace("{args}", args));
     const widget = (data.widgets || []).find(
@@ -821,6 +848,10 @@
           sendResponse({
             status: "error",
             error: err.message || String(err),
+            // Stable code + params (e.g. the host the browser blocked) – the
+            // background passes them through to the history page.
+            errorCode: (err && err.userCode) || null,
+            errorParams: (err && err.userParams) || null,
           });
         });
       return true; // asynchronous response

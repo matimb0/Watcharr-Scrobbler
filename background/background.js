@@ -588,7 +588,8 @@ async function handleMessage(msg, sender) {
         // A blocked request ("NetworkError") means the extension has no host
         // permission for that host. Logging which URL failed and which origins
         // are granted at all is the decisive information: the Prime Video API
-        // lives on primevideo.com and its atv-ps*.primevideo.com hosts.
+        // is served from primevideo.com AND from the account's Amazon
+        // marketplace (see WatcharrServices.apiPatterns).
         console.error(
           "[watcharr-scrobbler] Prime Video API request failed:",
           msg.url,
@@ -605,6 +606,17 @@ async function handleMessage(msg, sender) {
           } catch (_) {
             /* diagnostics only */
           }
+          // Hand the blocked host back so the history page can ask for exactly
+          // that origin on the next "Reload" click (see neededOrigins there).
+          const blockedOrigin =
+            typeof WatcharrServices !== "undefined"
+              ? WatcharrServices.originPattern(msg.url)
+              : "";
+          return {
+            ok: false,
+            error: message,
+            blockedOrigin: blockedOrigin || null,
+          };
         }
         return { ok: false, error: message };
       }

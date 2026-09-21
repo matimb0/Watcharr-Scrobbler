@@ -29,12 +29,8 @@ integrated as services.
 
 ## Installation
 
-> **Note regarding permissions:** The manifest only requests access to the
-> fixed service hosts (Netflix, Prime Video incl. its API hosts, plex.tv).
-> What is not known in advance – your self-hosted Watcharr instance and your
-> Jellyfin server – is requested at runtime: when you save the Jellyfin or
-> Watcharr URL in the settings, or with the first click on “Reload” on the
-> history page. The prompt then names the concrete hosts, not “all sites”.
+> **Note regarding permissions:** The manifest requests access to the
+> service hosts at runtime.
 
 **Firefox**
 

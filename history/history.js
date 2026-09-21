@@ -66,6 +66,9 @@ const ERROR_KEYS = {
   // Host permissions are optional in Firefox: the manifest only requests them,
   // and without them a service tab cannot be read or injected into.
   host_permission_missing: "history.error.hostPermission",
+  // A fetch the browser blocked, with the blocked host as {origin}. Carries
+  // more information than the raw "NetworkError" fallback in describeError.
+  network_blocked: "history.error.networkBlockedOrigin",
   service_not_configured: "history.error.serviceNotConfigured",
   no_service_response: "history.error.noResponse",
   auth_failed: "history.error.authFailed",
@@ -99,14 +102,19 @@ function searchTypeLabel(type) {
  *  when nothing usable is available. */
 async function describeError(err, fallbackKey) {
   if (err && err.errorCode && ERROR_KEYS[err.errorCode]) {
-    return t(ERROR_KEYS[err.errorCode], (err && err.errorParams) || {});
+    const params = Object.assign({}, (err && err.errorParams) || {});
+    // Messages about host access name the concrete service. Codes that carry
+    // their own service (the background knows the tab it talked to) keep it.
+    if (params.service === undefined) params.service = serviceLabel();
+    return t(ERROR_KEYS[err.errorCode], params);
   }
   const raw = (err && (err.error || err.message)) || "";
   // A fetch blocked by the browser surfaces as "NetworkError …". That is
   // almost always missing host access – telling the user to try again would be
-  // useless, so the actionable hint replaces the raw browser message.
+  // useless, so the actionable hint replaces the raw browser message. It names
+  // the service whose history is being loaded.
   if (/NetworkError|Network Error|Failed to fetch/i.test(raw)) {
-    return t("history.error.networkBlocked");
+    return t("history.error.networkBlocked", { service: serviceLabel() });
   }
   if (raw) return t("history.error.generic", { reason: raw });
   return t(fallbackKey || "history.loadingFailed");
@@ -131,11 +139,13 @@ async function applyLanguage(lang) {
   updateOrderBtn();
   updateMatchModeBtn();
   updateSourceUI();
+  updateServiceNote();
 }
 
 const els = {
   reloadBtn: $("#reloadBtn"),
   statusBar: $("#statusBar"),
+  serviceNote: $("#serviceNote"),
   selectAllBtn: $("#selectAllBtn"),
   selectNoneBtn: $("#selectNoneBtn"),
   filterBox: $("#filterBox"),
@@ -171,6 +181,12 @@ let availableServices = [];
 // Settings this page was opened with (Jellyfin server, Watcharr URL). They
 // decide which host access has to be requested – see neededOrigins().
 let loadedSettings = null;
+// Hosts the browser blocked while loading, per service id. The set of hosts a
+// service needs is not always known up front: the Prime Video API, for example,
+// is served from the account's Amazon marketplace, which Amazon picks from the
+// region during the first request. Such a host is reported by the background
+// (see noteBlockedOrigin) and then requested on the next "Reload" click.
+const blockedOrigins = new Map();
 
 const TMDB_IMG = "https://image.tmdb.org/t/p/w185";
 
@@ -707,6 +723,7 @@ function setFileMode(on, name) {
   fileMode = !!on;
   fileName = fileMode ? name || fileName || "" : "";
   updateSourceUI();
+  updateServiceNote(); // the note belongs to a service, not to a file
 }
 
 /** Shows/hides the file-mode controls (back button, export availability). */
@@ -801,6 +818,10 @@ function clearList(loadingText, showCancel) {
 
 async function load() {
   if (loadingInitial || exporting) return false; // a load/export is running
+  // The Watcharr URL and the Jellyfin server decide which host access is
+  // required – pick up changes made on the settings page since this page was
+  // opened (they are also what the next Reload click will ask for).
+  if (!fileMode) await refreshLoadedSettings();
   // Without host access the service tab cannot be read at all, and the remedy
   // needs a click – so say that instead of loading into a tab error.
   if (!fileMode && !(await hasServiceAccess())) {
@@ -836,8 +857,10 @@ async function load() {
       load();
       return false;
     }
-    if (!resp || !resp.ok)
+    if (!resp || !resp.ok) {
+      noteBlockedOrigin(resp); // the next "Reload" click asks for that host
       throw new Error(await describeError(resp, "history.loadingFailed"));
+    }
     ok = true;
     // The background reports the source of the delivered list – this is the
     // single source of truth for file mode (a service load clears it).
@@ -893,8 +916,10 @@ async function loadMore() {
       oldestFirst,
       service: serviceId,
     });
-    if (!resp || !resp.ok)
+    if (!resp || !resp.ok) {
+      noteBlockedOrigin(resp); // the next "Reload" click asks for that host
       throw new Error(await describeError(resp, "history.loadingFailed"));
+    }
     if (gen !== loadGen) return; // a fresh load replaced this list – discard
     const newItems = resp.items || [];
     allItems.push(...newItems);
@@ -902,6 +927,7 @@ async function loadMore() {
     allLoaded = !!resp.done;
     appendItems(newItems);
     if (resp.error) {
+      noteBlockedOrigin(resp);
       setStatus("error", await describeError(resp, "history.loadingFailed"));
     } else if (allLoaded) {
       clearStatus();
@@ -1424,8 +1450,10 @@ async function runExport() {
       );
       return;
     }
-    if (!resp || !resp.ok)
+    if (!resp || !resp.ok) {
+      noteBlockedOrigin(resp); // the next "Reload" click asks for that host
       throw new Error(await describeError(resp, "history.exportFailed"));
+    }
     const rows = resp.rows || [];
     if (!rows.length) {
       setStatus("info", await t("history.emptyHistory"));
@@ -1496,11 +1524,17 @@ els.exportModal.addEventListener("click", (e) => {
   if (e.target === els.exportModal && !exporting) closeExportDialog();
 });
 
-els.reloadBtn.addEventListener("click", () => {
+els.reloadBtn.addEventListener("click", async () => {
   // Missing host access is the one load failure the user can fix with a click –
-  // granting a permission needs a user gesture, and this click is one. When
-  // everything is granted already, this resolves without any prompt.
-  requestServiceAccess().finally(load);
+  // granting a permission needs a user gesture, and this click is one. The
+  // request starts synchronously inside requestServiceAccess (see there); when
+  // everything is granted already it resolves without any prompt.
+  await requestServiceAccess();
+  if (!(await hasServiceAccess())) {
+    await showPermissionBlocked();
+    return;
+  }
+  load();
 });
 
 // -- Import from a file -------------------------------------------------------
@@ -1531,9 +1565,44 @@ window.addEventListener("scroll", () => {
   }
 });
 
+/** Advice that belongs to ONE service, as i18n key. Prime Video fetches its
+ *  history through TWO sessions – the Prime Video site and the Amazon
+ *  marketplace the account belongs to (see the API hosts in
+ *  background/services.js) – so both have to be logged in with the same
+ *  account; otherwise the list is incomplete or shows someone else's history. */
+const SERVICE_NOTES = {
+  primevideo: "history.primeVideoNote",
+};
+
+/** Shows the note of the service currently displayed (and hides it in file
+ *  mode, where the history does not come from a service). */
+async function updateServiceNote() {
+  const el = els.serviceNote;
+  if (!el) return;
+  const key = fileMode ? null : SERVICE_NOTES[serviceId];
+  if (!key) {
+    el.classList.add("hidden");
+    el.replaceChildren();
+    el.dataset.note = "";
+    return;
+  }
+  // applyServiceHeader() runs on every reconciliation – rebuild the text only
+  // when the note or the language really changed.
+  const stamp = key + "|" + currentLanguage;
+  if (el.dataset.note === stamp) return;
+  el.dataset.note = stamp;
+  const lead = document.createElement("strong");
+  lead.textContent = await t("history.noteLead");
+  // Plain DOM nodes instead of HTML: the text is ours, but parameters never
+  // pass through an HTML parser.
+  el.replaceChildren(lead, document.createTextNode(" " + (await t(key))));
+  el.classList.remove("hidden");
+}
+
 /** Sets the header title/subtitle to the selected service (or to the loaded
  *  file while the page is in file-import mode). */
 async function applyServiceHeader() {
+  await updateServiceNote();
   if (fileMode) {
     if (els.pageTitle) els.pageTitle.textContent = await t("history.fileTitle");
     if (els.pageSubtitle) {
@@ -1816,20 +1885,113 @@ async function showNoService() {
 }
 
 /**
- * Host access the background needs to load a history. The list is built by the
- * service registry (`WatcharrServices.permissionOrigins`) from
+ * Host access the background needs to load the history of the CURRENT service.
+ * The list is built by the service registry
+ * (`WatcharrServices.permissionOrigins`) from
  *
- *  - the fixed service hosts (Netflix, Prime Video incl. its atv-ps API hosts,
- *    plex.tv) – declared in the manifest and therefore granted at install time,
- *  - the configured Jellyfin server, and
+ *  - the patterns of that one service (Netflix, Prime Video, the configured
+ *    Jellyfin server) and
  *  - the user's Watcharr instance.
  *
- * The last two can only be known at runtime, so they are requested when the
- * need arises (see requestServiceAccess) instead of asking for every site up
- * front in the manifest.
+ * Only the current service is asked for: this page never reads another one,
+ * and a single foreign origin (a service whose access was revoked, a server URL
+ * that changed) would otherwise block the whole request – the browser grants
+ * all requested permissions or none.
+ *
+ * The Watcharr URL can only be known at runtime, so it is requested when the
+ * need arises (see requestServiceAccess) instead of asking for it up front in
+ * the manifest.
  */
 function neededOrigins() {
-  return WatcharrServices.permissionOrigins(loadedSettings || {});
+  return originsForService(serviceId);
+}
+
+/** Match patterns that have to be granted for ONE service: its hosts plus the
+ *  Watcharr instance, and every host the browser blocked for that service
+ *  before (see noteBlockedOrigin). */
+function originsForService(id) {
+  const origins = WatcharrServices.permissionOrigins(loadedSettings || {}, [
+    id,
+  ]);
+  for (const pattern of blockedOrigins.get(id) || []) {
+    if (!origins.includes(pattern)) origins.push(pattern);
+  }
+  return origins;
+}
+
+/** Display name of a service (default: the one whose history is shown here).
+ *  Used so permission messages name the concrete service instead of a list. */
+function serviceLabel(id) {
+  const svc = WatcharrServices.byId(id || serviceId);
+  return svc ? svc.name : "";
+}
+
+/** Services from `list` whose host access is not granted yet. Returns [] when
+ *  the Permissions API is unavailable or the check fails – never throws. */
+async function servicesWithoutAccess(list) {
+  const out = [];
+  if (!browser.permissions || !browser.permissions.contains) return out;
+  for (const svc of list) {
+    const origins = originsForService(svc.id);
+    if (!origins.length) continue;
+    try {
+      if (!(await browser.permissions.contains({ origins }))) out.push(svc);
+    } catch (_) {
+      /* cannot check – do not claim the access is missing */
+    }
+  }
+  return out;
+}
+
+/** Name for a permission message: the service this page is about, i.e. the one
+ *  whose history it loads and whose hosts the next "Reload" click asks for.
+ *  When that service already has access (a blocked host is the reason then),
+ *  the check names whoever really is missing it – and if the check cannot
+ *  decide, the service itself is named instead of listing all known ones. */
+async function missingAccessServiceNames() {
+  const svc = WatcharrServices.byId(serviceId);
+  const candidates = svc ? [svc] : availableServices.slice();
+  const missing = await servicesWithoutAccess(candidates);
+  const list = missing.length ? missing : candidates;
+  if (list.length) return list.map((s) => s.name).join(" / ");
+  return WatcharrServices.list
+    .filter((s) => WatcharrServices.hasHistory(s))
+    .map((s) => s.name)
+    .join(" / ");
+}
+
+/** Remembers the host the browser blocked for the current service. The
+ *  background reports it as {origin} on a blocked fetch (only http/https match
+ *  patterns are accepted – anything else could not be requested anyway), which
+ *  is exactly what the next "Reload" click then asks for. */
+function noteBlockedOrigin(resp) {
+  const origin = resp && resp.errorParams && resp.errorParams.origin;
+  if (typeof origin !== "string" || !/^(https?|\*):\/\//.test(origin)) return;
+  const list = blockedOrigins.get(serviceId) || [];
+  if (list.includes(origin)) return;
+  list.push(origin);
+  blockedOrigins.set(serviceId, list);
+  dbg("blocked origin noted", serviceId, origin);
+}
+
+/** Refreshes the settings this page works with (Watcharr URL, Jellyfin server).
+ *  Both decide which host access is checked and requested, and both can have
+ *  been changed on the settings page since this page was opened. Never throws.
+ */
+async function refreshLoadedSettings() {
+  try {
+    const state = await browser.runtime.sendMessage({
+      type: "watcharr:getState",
+    });
+    if (state && state.ok && state.settings) {
+      loadedSettings = state.settings;
+      if (window.WatcharrServices)
+        WatcharrServices.applySettings(state.settings);
+    }
+  } catch (_) {
+    /* keep the settings this page was opened with */
+  }
+  return loadedSettings;
 }
 
 /** True when the extension may read (and inject into) the service pages and
@@ -1845,42 +2007,63 @@ async function hasServiceAccess() {
   }
 }
 
-/** Asks for the missing host access. Must run inside a user gesture (a click),
- *  which is why it is only called from the Reload button and the settings page.
- *  Nothing is shown when the access is already granted. */
-async function requestServiceAccess() {
-  if (!browser.permissions || !browser.permissions.request) return false;
-  // Ask the background for the current settings first: the Jellyfin server and
-  // the Watcharr URL are part of what has to be requested, and both can have
-  // been changed in the settings since this page was opened.
-  try {
-    const state = await browser.runtime.sendMessage({
-      type: "watcharr:getState",
-    });
-    if (state && state.ok) loadedSettings = state.settings || loadedSettings;
-  } catch (_) {
-    /* keep the settings this page was opened with */
+/** Asks for the missing host access (Reload button, settings page).
+ *
+ *  Nothing is shown when the access is already granted. Resolves true when the
+ *  access is (now) granted – also when the API is missing entirely, so that a
+ *  plain reload still loads.
+ *
+ *  MUST be started from the click handler itself. A runtime permission request
+ *  is only honoured while the user action that triggered it is still being
+ *  handled: every `await` before it (a background round-trip, a
+ *  permissions.contains check) ends that task, and Firefox then drops the
+ *  request without a prompt and without an error – the button appears to do
+ *  nothing. The origins are therefore computed synchronously from the settings
+ *  this page knows, and permissions.request is the first call made here. */
+function requestServiceAccess() {
+  if (!browser.permissions || !browser.permissions.request) {
+    return Promise.resolve(true); // no Permissions API – just load
   }
+  const origins = neededOrigins();
+  if (!origins.length) return Promise.resolve(true);
+  let request;
   try {
-    const origins = neededOrigins();
-    if (await browser.permissions.contains({ origins })) return true;
-    const granted = await browser.permissions.request({ origins });
-    dbg("permission request ->", granted);
-    return !!granted;
+    // No await above this line: the user gesture has to still be active.
+    request = browser.permissions.request({ origins });
   } catch (err) {
-    dbg("permission request failed", err && err.message);
-    return false;
+    dbg("permission request threw", err && err.message);
+    return Promise.resolve(false);
   }
+  return Promise.resolve(request).then(
+    (granted) => {
+      dbg("permission request ->", granted, origins);
+      return !!granted;
+    },
+    (err) => {
+      dbg("permission request failed", err && err.message);
+      return false;
+    },
+  );
+}
+
+/** The browser did not grant the host access – the request was refused, or it
+ *  was not accepted as a user action at all. Say how to grant it by hand
+ *  instead of leaving the user with a button that seems to do nothing. */
+async function showPermissionBlocked() {
+  await showPermissionHint("history.permissionBlocked");
 }
 
 /** The extension is not allowed to read the service yet. Says so instead of
  *  letting the load end in a tab error the user cannot act on. */
 async function showNeedPermission() {
-  const list = availableServices.length
-    ? availableServices
-    : WatcharrServices.list.filter((s) => WatcharrServices.hasHistory(s));
-  const names = list.map((s) => s.name).join(" / ");
-  const msg = await t("history.needPermission", { services: names });
+  await showPermissionHint("history.needPermission");
+}
+
+/** Shows one of the "no host access" hints in the status bar and the list, both
+ *  naming the concrete service the missing access belongs to. */
+async function showPermissionHint(key) {
+  const service = await missingAccessServiceNames();
+  const msg = await t(key, { service });
   setStatus("error", msg);
   replaceFromHtml(
     els.list,

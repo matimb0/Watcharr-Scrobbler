@@ -49,6 +49,25 @@
       name: "Amazon Prime Video",
       urlTest: /(^|\.)primevideo\.com$/i,
       urlPattern: "*://*.primevideo.com/*",
+      // The Prime Video API is NOT only served from primevideo.com: Amazon
+      // picks the account's marketplace (`territoryConfig.defaultVideoWebsite`,
+      // e.g. https://www.amazon.de) plus the matching API host
+      // (atv-ps[-<region>].amazon.<tld>) from the account region and serves the
+      // profile/history/metadata calls there. Which one it is only becomes
+      // known during the first API request, so the known marketplaces are
+      // requested as a set.
+      //
+      // These hosts are deliberately NOT in the manifest: they are only needed
+      // for extension-side fetches, and as page patterns they would make every
+      // Amazon tab look like a Prime Video tab. They are covered by the
+      // optional host permission, so asking for them at runtime is enough.
+      apiPatterns: [
+        "*://*.amazon.com/*",
+        "*://*.amazon.co.uk/*",
+        "*://*.amazon.de/*",
+        "*://*.amazon.co.jp/*",
+        "*://*.amazon.com.au/*",
+      ],
       contentScripts: ["content/primevideo/primevideo-content.js"],
       hasHistory: true,
     },
@@ -187,27 +206,62 @@
   }
 
   /**
+   * Match patterns for a SINGLE service (empty when it has none yet – e.g. a
+   * not-yet-configured Jellyfin server).
+   *
+   * The Jellyfin pattern is derived from the settings right here instead of
+   * reading it from the descriptor: this is also called from contexts (settings
+   * page, history page) that hold the settings but never applied them to the
+   * registry.
+   */
+  function patterns(svc, settings) {
+    if (!svc) return [];
+    const jellyfinBase = normalizeServerUrl(settings && settings.jellyfinUrl);
+    const pattern =
+      svc.id === "jellyfin" && jellyfinBase
+        ? jellyfinBase + "/*"
+        : svc.urlPattern;
+    return typeof pattern === "string" && pattern !== "" ? [pattern] : [];
+  }
+
+  /**
+   * Every match pattern a service needs to be read completely: its page
+   * patterns (see `patterns`) plus the hosts its API is reached through
+   * (`apiPatterns` – the extension fetches those itself, so they do not show up
+   * in tab detection).
+   */
+  function permissionPatterns(svc, settings) {
+    const out = patterns(svc, settings);
+    for (const p of (svc && svc.apiPatterns) || []) {
+      if (typeof p === "string" && p !== "" && !out.includes(p)) out.push(p);
+    }
+    return out;
+  }
+
+  /**
    * All origins the extension needs for the given settings, as match patterns:
-   * the fixed service hosts, the configured Jellyfin server and the Watcharr
+   * the fixed service hosts, the configured Jellyfin server, the service API
+   * hosts (`apiPatterns` – see the Prime Video descriptor) and the Watcharr
    * instance.
    *
-   * Only `STATIC_HOSTS` are declared in the manifest – the other two are known
-   * at runtime only (self-hosted server, the user's own Watcharr URL). Callers
-   * therefore use this list both to check the current access and to ask for it
-   * (browser.permissions.request).
+   * Only `STATIC_HOSTS` are declared in the manifest – the others (self-hosted
+   * server, marketplace API hosts, the user's own Watcharr URL) are known at
+   * runtime only. Callers therefore use this list both to check the current
+   * access and to ask for it (browser.permissions.request).
+   *
+   * `serviceIds` narrows the list down to those services (the Watcharr instance
+   * stays in). The history page uses that: it only ever reads ONE service, and
+   * asking for every host at once means a single foreign origin (another
+   * service, a stale server URL) can block the whole request – the browser
+   * grants all requested permissions or none.
    */
-  function permissionOrigins(settings) {
-    const origins = [...STATIC_HOSTS];
-    // Configured services. The Jellyfin pattern is derived from the settings
-    // right here instead of reading it from the descriptor: this function is
-    // also called from contexts (settings page, history page) that hold the
-    // settings but never applied them to the registry.
-    const jellyfinBase = normalizeServerUrl(settings && settings.jellyfinUrl);
-    for (const svc of list) {
-      const pattern =
-        svc.id === "jellyfin" && jellyfinBase
-          ? jellyfinBase + "/*"
-          : svc.urlPattern;
+  function permissionOrigins(settings, serviceIds) {
+    const only =
+      Array.isArray(serviceIds) && serviceIds.length
+        ? new Set(serviceIds)
+        : null;
+    const origins = [];
+    const add = (pattern) => {
       if (
         typeof pattern === "string" &&
         pattern !== "" &&
@@ -215,9 +269,15 @@
       ) {
         origins.push(pattern);
       }
+    };
+    // The fixed hosts are the full set; for a single service its own pattern
+    // already covers the service host.
+    if (!only) STATIC_HOSTS.forEach(add);
+    for (const svc of list) {
+      if (only && !only.has(svc.id)) continue;
+      permissionPatterns(svc, settings).forEach(add);
     }
-    const watcharr = originPattern(settings && settings.watcharrUrl);
-    if (watcharr && !origins.includes(watcharr)) origins.push(watcharr);
+    add(originPattern(settings && settings.watcharrUrl));
     return origins;
   }
 
@@ -232,6 +292,8 @@
     hasTabPattern,
     hasHistory,
     originPattern,
+    patterns,
+    permissionPatterns,
     permissionOrigins,
     STATIC_HOSTS,
   };

@@ -323,16 +323,22 @@ async function load() {
 
 async function login() {
   if (plexPolling) return;
-  if (method === "plex") {
-    await startPlexLogin();
-    return;
-  }
   const url = els.url.value.trim();
   const username = els.username.value.trim();
   const password = els.password.value;
 
-  if (!url || !username || !password) {
+  if (method !== "plex" && (!url || !username || !password)) {
     showBanner("error", await t("settings.missingFields"));
+    return;
+  }
+
+  // Ask for the host access right here – everything above is synchronous, so
+  // this click still counts as the user gesture the request needs (see
+  // requestHostAccess). Waiting for the login round-trip first would lose it.
+  const accessPromise = requestHostAccess();
+
+  if (method === "plex") {
+    await startPlexLogin();
     return;
   }
 
@@ -340,6 +346,9 @@ async function login() {
   clearBanner();
 
   try {
+    // Wait for the answer to the prompt before talking to the server: without
+    // the host permission the login request could not leave the extension.
+    await accessPromise;
     const resp = await browser.runtime.sendMessage({
       type: "watcharr:login",
       url,
@@ -353,9 +362,6 @@ async function login() {
         "success",
         await t("settings.connected", { username: resp.username }),
       );
-      // The Watcharr URL is now stored – ask for access to it while the click
-      // still counts as a user gesture (no prompt when it is already granted).
-      await requestHostAccess();
       await load();
     } else {
       showBanner("error", await loginErrorMessage(resp));
@@ -546,33 +552,50 @@ async function saveBehaviour() {
 }
 
 /**
+ * Origins the extension needs for what is in the form right now: the Watcharr
+ * instance, the (self-hosted) Jellyfin server and the fixed service hosts.
+ * Built synchronously from the form fields, because it has to happen before the
+ * permission request – see requestHostAccess().
+ */
+function requestOrigins() {
+  if (!window.WatcharrServices) return [];
+  return WatcharrServices.permissionOrigins({
+    watcharrUrl: els.url ? els.url.value.trim() : "",
+    jellyfinUrl: els.jellyfinUrl ? els.jellyfinUrl.value.trim() : "",
+  });
+}
+
+/**
  * Asks for access to the hosts that are only known from the settings: the
  * self-hosted Jellyfin server and the user's Watcharr instance. Both are
  * declared nowhere in the manifest (their URLs are typed in here), so the
  * permission has to be requested at runtime – and a runtime request needs a
  * user gesture, which the click on "Save"/leaving the field provides.
  *
+ * The request MUST start inside that gesture: every `await` before it (a
+ * background round-trip, a permissions.contains check) ends the task, and
+ * Firefox then drops the request without a prompt and without an error. So the
+ * origins come from the form fields and permissions.request is the first call.
+ *
  * If nothing is missing, no prompt is shown at all.
  */
-async function requestHostAccess() {
-  if (!window.WatcharrServices || !browser.permissions) return;
-  if (!browser.permissions.request || !browser.permissions.contains) return;
-  let settings = null;
-  try {
-    const state = await browser.runtime.sendMessage({
-      type: "watcharr:getState",
-    });
-    if (state && state.ok) settings = state.settings;
-  } catch (_) {
-    return; // background unreachable – nothing to request for now
+function requestHostAccess() {
+  if (!browser.permissions || !browser.permissions.request) {
+    return Promise.resolve(true);
   }
-  const origins = WatcharrServices.permissionOrigins(settings || {});
+  const origins = requestOrigins();
+  if (!origins.length) return Promise.resolve(true);
+  let request;
   try {
-    if (await browser.permissions.contains({ origins })) return;
-    await browser.permissions.request({ origins });
+    request = browser.permissions.request({ origins }); // no await above!
   } catch (err) {
-    console.warn("[watcharr-scrobbler] permission request failed:", err);
+    console.warn("[watcharr-scrobbler] permission request threw:", err);
+    return Promise.resolve(false);
   }
+  return Promise.resolve(request).catch((err) => {
+    console.warn("[watcharr-scrobbler] permission request failed:", err);
+    return false;
+  });
 }
 
 /* ---------- Jellyfin server (self-hosted service) ---------- */
@@ -586,6 +609,10 @@ async function requestHostAccess() {
 async function saveJellyfinUrl() {
   if (!els.jellyfinUrl) return;
   const typed = els.jellyfinUrl.value.trim();
+  // The server URL decides which host the extension has to be allowed to read –
+  // ask for it right here, while this change event still counts as a user
+  // gesture (see requestHostAccess).
+  const accessPromise = requestHostAccess();
   const resp = await browser.runtime.sendMessage({
     type: "watcharr:saveSettings",
     settings: { jellyfinUrl: typed },
@@ -601,9 +628,7 @@ async function saveJellyfinUrl() {
     showJellyfinBanner("error", await t("settings.jellyfinInvalid"));
     return;
   }
-  // The server URL decides which host the extension has to be allowed to read -
-  // ask for it right here, while the user's click still counts as a gesture.
-  await requestHostAccess();
+  await accessPromise;
   showJellyfinBanner("success", await t("settings.jellyfinSaved"));
 }
 
