@@ -101,6 +101,12 @@
 
     <section id="statusBar" class="status hidden"></section>
 
+    <!-- Service-specific note, filled in by updateServiceNote() (see
+         history.js). Prime Video uses it to point out that the history API
+         answers for the account that is logged in on the marketplace host as
+         well – see the SERVICE_NOTES map. -->
+    <section id="serviceNote" class="note hidden" aria-live="polite"></section>
+
     <section class="toolbar">
       <button id="selectAllBtn" class="ghost" data-i18n="history.selectAll">
         Select all
