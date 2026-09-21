@@ -37,10 +37,12 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
-  padding: 14px 20px;
+  gap: 10px 20px;
+  flex-wrap: wrap;
+  padding: 12px 20px;
   border-bottom: 1px solid var(--border);
   background: var(--bg-elev);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.35);
   position: sticky;
   top: 0;
   z-index: 10;
@@ -50,39 +52,37 @@ body {
   display: flex;
   align-items: center;
   gap: 12px;
+  min-width: 0;
 }
 
 .brand .logo {
   width: 40px;
   height: 40px;
   border-radius: 10px;
+  flex: none;
+}
+
+/* Title/subtitle: ellipsized instead of pushing the toolbar out of the bar. */
+.brand-text {
+  min-width: 0;
 }
 
 .brand h1 {
   margin: 0;
   font-size: 18px;
   font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .brand .sub {
   margin: 0;
   font-size: 12px;
   color: var(--text-dim);
-}
-
-.actions button {
-  padding: 8px 14px;
-  border-radius: 8px;
-  border: 1px solid var(--border);
-  background: transparent;
-  color: var(--text);
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.actions button:hover {
-  background: var(--bg-elev-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* Provider button in the header (next to the logo/title): shows which
@@ -103,6 +103,7 @@ body {
   align-items: center;
   gap: 6px;
   cursor: default;
+  flex: none;
 }
 
 .service-btn::after {
@@ -126,10 +127,91 @@ body {
   opacity: 1;
 }
 
-.actions {
+/* Tool bar – inset groups instead of a row of loose buttons:
+   "data" (reload / file / export) and "view" (order / matching). */
+.tools {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-left: auto; /* stays right-aligned while the bar wraps */
+}
+
+.toolgroup {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-elev-2);
+}
+
+.tool {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 11px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-dim);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.2;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+/* Hairline between the buttons of one group (without breaking the
+   rounded hover background). */
+.toolgroup .tool + .tool {
+  box-shadow: inset 1px 0 0 var(--border);
+}
+
+.tool:hover:not(:disabled) {
+  background: var(--bg-elev);
+  color: var(--text);
+}
+
+.tool:focus-visible {
+  outline: 2px solid var(--accent-2);
+  outline-offset: 1px;
+}
+
+.tool:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* Toggle in its "on" state (oldest first / rough matching). */
+.tool.active {
+  background: rgba(255, 77, 90, 0.12);
+  color: var(--accent-2);
+}
+
+.tool .ico {
+  width: 15px;
+  height: 15px;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: 0.9;
+}
+
+/* Narrow windows: the toolbar wraps below the brand and keeps its groups. */
+@media (max-width: 760px) {
+  .topbar {
+    padding: 10px 14px;
+  }
+
+  .tools {
+    margin-left: 0;
+  }
 }
 
 /* Status */
@@ -665,6 +747,58 @@ button:disabled {
   color: var(--text-dim);
   font-size: 13px;
   line-height: 1.55;
+}
+
+/* Export dialog: format selection (CSV / JSON) and progress line. */
+.modal .export-progress {
+  margin-bottom: 16px;
+  color: var(--accent-2);
+  font-weight: 600;
+}
+
+.export-options {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin: 0 0 20px;
+}
+
+.export-label {
+  color: var(--text-dim);
+  font-size: 13px;
+}
+
+.export-option {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.export-option input[type="radio"] {
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+/* Optional TMDB enrichment (checkbox + explanation). */
+.export-tmdb {
+  margin-bottom: 6px;
+}
+
+.export-tmdb input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.export-hint {
+  margin: 0 0 18px 22px;
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .modal-actions {
