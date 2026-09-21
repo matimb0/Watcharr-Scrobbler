@@ -46,6 +46,17 @@ const baseName = addonId || "watcharr-scrobbler";
 const FIREFOX_XPI = `${baseName}-firefox-${rootManifest.version}.xpi`;
 const CHROME_ZIP = `${baseName}-chrome-${rootManifest.version}.zip`;
 
+// ANY root package of this add-on (`<name>-firefox-1.1.xpi`, `<name>-chrome-2.0.zip`, …)
+// must stay out of a store package – not only the ones of the current version.
+// Build order: the Firefox package is written before the stale Chrome package of
+// an older version is removed, so a name check limited to the current version
+// would nest the old ZIP inside the new XPI.
+const ROOT_PACKAGE_RE = new RegExp(
+  "^" +
+    baseName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") +
+    "-.*\\.(xpi|zip)$",
+);
+
 // Files/folders that are never part of a store package.
 const COMMON_EXCLUDE = new Set([
   ".git",
@@ -76,7 +87,7 @@ function copyTree(src, dest, exclude, rel = "") {
   mkdirSync(dest, { recursive: true });
   for (const entry of readdirSync(src, { withFileTypes: true })) {
     const relPath = rel ? `${rel}/${entry.name}` : entry.name;
-    if (exclude.has(relPath)) continue;
+    if (exclude.has(relPath) || ROOT_PACKAGE_RE.test(relPath)) continue;
     const from = join(src, entry.name);
     const to = join(dest, entry.name);
     if (entry.isDirectory()) {
