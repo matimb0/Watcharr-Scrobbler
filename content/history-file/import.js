@@ -2,12 +2,12 @@
  * Import (file -> Watcharr) – parsing of an exported history file.
  *
  * Turns a previously exported CSV or JSON file into the rows/entries the
- * history page works with. The import/export feature lives in
- * content/importexport/, one file per direction.
+ * history page works with. The history-file feature lives in
+ * content/history-file/, one file per direction.
  *
  * Pure data processing (no DOM, no `browser.*`), so it is loaded as a classic
- * script where needed (background, see background/history.js) and exposes the
- * global `WatcharrImportExport`.
+ * script where needed (background/history/index.js) and exposes the global
+ * `WatcharrHistoryFileImport`.
  *
  * The accepted field spellings are deliberately generous, so the import also
  * works for files written by other tools, not only our own export.
@@ -327,5 +327,9 @@
     });
   }
 
-  globalThis.WatcharrImportExport = api;
+  globalThis.WatcharrHistoryFileImport = {
+    parse,
+    toEntry,
+    sortNewestFirst,
+  };
 })();

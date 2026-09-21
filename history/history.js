@@ -50,8 +50,8 @@ function dbg(...args) {
   if (DEBUG) console.log("[watcharr-scrobbler:history]", ...args);
 }
 
-// Stable error codes from the background (background/history.js and
-// background/watcharr-client.js) mapped to translation keys, so extension-
+// Stable error codes from the background (background/errors.js users:
+// messages/*.js and history/*.js) mapped to translation keys, so extension-
 // authored error text is localized instead of shown raw. Unknown/arbitrary
 // (server) messages fall back to the translated generic wrapper below.
 const ERROR_KEYS = {
@@ -1328,12 +1328,12 @@ els.importBtn.addEventListener("click", async () => {
 // offers an abort button.
 //
 // Row shape and file serialization live in
-// content/importexport/export-content.js (`WatcharrExport`); this page only
+// content/history-file/export.js (`WatcharrHistoryFileExport`); this page only
 // picks the format, downloads the text and shows progress.
 
 /** File name of the export, e.g. "watcharr-scrobbler-netflix-2026-09-16.csv". */
 function exportFilename(format) {
-  return WatcharrExport.filename(serviceId, format);
+  return WatcharrHistoryFileExport.filename(serviceId, format);
 }
 
 /** Chosen export format ("csv" | "json") from the dialog. */
@@ -1342,15 +1342,15 @@ function selectedExportFormat() {
   return checked && checked.value === "json" ? "json" : "csv";
 }
 
-/** CSV text of the export rows (RFC 4180, see export-content.js). */
+/** CSV text of the export rows (RFC 4180, see content/history-file/export.js). */
 function rowsToCsv(rows) {
-  return WatcharrExport.toCsv(rows);
+  return WatcharrHistoryFileExport.toCsv(rows);
 }
 
 /** JSON text of the export rows, with the metadata header of this export. */
 function rowsToJson(rows) {
   const svc = WatcharrServices.byId(serviceId);
-  return WatcharrExport.toJson(rows, svc ? svc.name : serviceId);
+  return WatcharrHistoryFileExport.toJson(rows, svc ? svc.name : serviceId);
 }
 
 /** Triggers the download of a generated text file (blob URL, no permission). */

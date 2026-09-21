@@ -10,15 +10,11 @@
  */
 "use strict";
 
-/** Builds an Error with a stable i18n code + params. The UI maps these codes
- *  to translation keys (see options/options.js and history/history.js), so
- *  extension-authored error text is localized instead of shown raw. */
-function clientError(code, message, params) {
-  const e = new Error(message);
-  e.userCode = code;
-  e.userParams = params || {};
-  return e;
-}
+/** Builds an Error with a stable i18n code + params (see background/errors.js).
+ *  The UI maps these codes to translation keys (options/options.js and
+ *  history/history.js), so extension-authored error text is localized instead
+ *  of shown raw. */
+const clientError = WatcharrErrors.create;
 
 class WatcharrClient {
   constructor(settings) {

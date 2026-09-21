@@ -1,17 +1,17 @@
 /*
- * Export (service -> file) – building and serializing a history export.
+ * Export (service history -> file) – building and serializing a history export.
  *
  * Turns service entries into export rows and those rows into the CSV/JSON text
- * of the export file. The import/export feature lives in
- * content/importexport/, one file per direction.
+ * of the export file. The history-file feature lives in content/history-file/,
+ * one file per direction.
  *
  * Pure data processing (no DOM), loaded as a classic script where needed:
- *   – background/history.js builds the export rows,
+ *   – background/history/index.js builds the export rows,
  *   – the history page serializes them into CSV/JSON text.
- * Exposes the global `WatcharrExport`.
+ * Exposes the global `WatcharrHistoryFileExport`.
  *
  * The CSV/JSON shapes stay compatible with the import side
- * (content/importexport/import-content.js) and with other services.
+ * (content/history-file/import.js) and with other services.
  */
 "use strict";
 
@@ -46,8 +46,8 @@
    * Flattens one service entry into the row shape of a history export.
    * The data comes from the service itself (plus which service it came from);
    * the `tmdb*` fields stay empty unless the export additionally resolves the
-   * title to TMDB through the Watcharr instance (see `enrichExportRows()` in
-   * background/history.js).
+   * title to TMDB through the Watcharr instance (see
+   * background/history/exporter.js).
    */
   function entryToExportRow(entry, svc) {
     const isTv = !!entry.isTv;
@@ -133,7 +133,7 @@
     );
   }
 
-  globalThis.WatcharrExport = {
+  globalThis.WatcharrHistoryFileExport = {
     EXPORT_COLUMNS,
     entryToExportRow,
     toCsv,

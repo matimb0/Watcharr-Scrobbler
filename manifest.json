@@ -21,12 +21,24 @@
   "optional_host_permissions": ["*://*/*"],
   "background": {
     "scripts": [
+      "background/errors.js",
+      "background/util.js",
+      "background/settings.js",
       "background/services.js",
       "background/service-tabs.js",
-      "content/importexport/import-content.js",
-      "content/importexport/export-content.js",
+      "content/history-file/import.js",
+      "content/history-file/export.js",
       "background/watcharr-client.js",
-      "background/history.js",
+      "background/jellyfin.js",
+      "background/history/matcher.js",
+      "background/history/loader.js",
+      "background/history/exporter.js",
+      "background/history/importer.js",
+      "background/history/index.js",
+      "background/messages/settings.js",
+      "background/messages/scrobble.js",
+      "background/messages/primevideo.js",
+      "background/messages/history.js",
       "background/background.js"
     ]
   },
@@ -34,14 +46,35 @@
     {
       "matches": ["*://www.netflix.com/*"],
       "js": [
+        "content/shared/util.js",
+        "content/shared/playback.js",
+        "content/shared/settings.js",
+        "content/shared/watcharr.js",
+        "content/shared/scrobbler.js",
+        "content/shared/summary.js",
+        "content/shared/messaging.js",
         "content/netflix/netflix-inject.js",
+        "content/netflix/netflix-playback.js",
+        "content/netflix/netflix-metadata.js",
+        "content/netflix/netflix-history.js",
         "content/netflix/netflix-content.js"
       ],
       "run_at": "document_start"
     },
     {
       "matches": ["*://www.primevideo.com/*"],
-      "js": ["content/primevideo/primevideo-content.js"],
+      "js": [
+        "content/shared/util.js",
+        "content/shared/playback.js",
+        "content/shared/settings.js",
+        "content/shared/watcharr.js",
+        "content/shared/scrobbler.js",
+        "content/shared/summary.js",
+        "content/shared/messaging.js",
+        "content/primevideo/primevideo-playback.js",
+        "content/primevideo/primevideo-history.js",
+        "content/primevideo/primevideo-content.js"
+      ],
       "run_at": "document_end"
     }
   ],

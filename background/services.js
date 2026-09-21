@@ -22,6 +22,20 @@
 (function () {
   "use strict";
 
+  // Loaded into every service page BEFORE the service's own scripts: shared
+  // helpers, the settings store, the Watcharr actions and the scrobble decision
+  // (see content/shared/). The manifest lists the very same files in the same
+  // order – keep both in sync.
+  const SHARED_CONTENT_SCRIPTS = [
+    "content/shared/util.js",
+    "content/shared/playback.js",
+    "content/shared/settings.js",
+    "content/shared/watcharr.js",
+    "content/shared/scrobbler.js",
+    "content/shared/summary.js",
+    "content/shared/messaging.js",
+  ];
+
   const list = [
     {
       id: "netflix",
@@ -30,7 +44,11 @@
       urlPattern: "*://*.netflix.com/*", // for browser.tabs.query({ url })
       // Order matters – must match the manifest entry.
       contentScripts: [
+        ...SHARED_CONTENT_SCRIPTS,
         "content/netflix/netflix-inject.js",
+        "content/netflix/netflix-playback.js",
+        "content/netflix/netflix-metadata.js",
+        "content/netflix/netflix-history.js",
         "content/netflix/netflix-content.js",
       ],
       hasHistory: true,
@@ -56,7 +74,12 @@
         "*://*.amazon.co.jp/*",
         "*://*.amazon.com.au/*",
       ],
-      contentScripts: ["content/primevideo/primevideo-content.js"],
+      contentScripts: [
+        ...SHARED_CONTENT_SCRIPTS,
+        "content/primevideo/primevideo-playback.js",
+        "content/primevideo/primevideo-history.js",
+        "content/primevideo/primevideo-content.js",
+      ],
       hasHistory: true,
     },
     {
@@ -68,7 +91,14 @@
       urlTest: null,
       urlPattern: null,
       serverUrl: "",
-      contentScripts: ["content/jellyfin/jellyfin-content.js"],
+      contentScripts: [
+        ...SHARED_CONTENT_SCRIPTS,
+        "content/jellyfin/jellyfin-auth.js",
+        "content/jellyfin/jellyfin-playback.js",
+        "content/jellyfin/jellyfin-items.js",
+        "content/jellyfin/jellyfin-history.js",
+        "content/jellyfin/jellyfin-content.js",
+      ],
       hasHistory: true,
       /** True when `url` belongs to the configured server (host AND base path –
        *  Jellyfin may run behind a reverse-proxy sub-path). */
