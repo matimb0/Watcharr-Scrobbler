@@ -5,13 +5,14 @@
  * raw JWT in the `Authorization` header (Watcharr does NOT expect a "Bearer "
  * prefix).
  *
- * Base URL example: https://watcharr.example.com  (the /api prefix is added here)
+ * Base URL example: https://watcharr.example.com (the /api prefix is added
+ * here).
  */
 "use strict";
 
-/** Builds an Error carrying a stable i18n code + params. The UI maps these
- *  codes to translation keys (see options/options.js and history/history.js)
- *  so extension-authored error copy is localized instead of shown raw. */
+/** Builds an Error with a stable i18n code + params. The UI maps these codes
+ *  to translation keys (see options/options.js and history/history.js), so
+ *  extension-authored error text is localized instead of shown raw. */
 function clientError(code, message, params) {
   const e = new Error(message);
   e.userCode = code;
@@ -25,10 +26,7 @@ class WatcharrClient {
     this.token = settings.token || "";
   }
 
-  get configured() {
-    return !!(this.url && this.token);
-  }
-
+  /** Generic JSON request against `<url>/api<path>`. */
   async _request(method, path, body) {
     if (!this.url)
       throw clientError(
@@ -62,7 +60,6 @@ class WatcharrClient {
       e.authRequired = true;
       throw e;
     }
-
     if (!resp.ok) {
       let msg = "HTTP " + resp.status;
       try {
@@ -87,24 +84,21 @@ class WatcharrClient {
   }
 
   /**
-   * Log in with Watcharr (default) or Jellyfin credentials and return the
-   * Watcharr JWT token.
-   * `method` is "" (Watcharr) or "jellyfin". Jellyfin must be enabled on the
-   * server (JELLYFIN_HOST) – Watcharr validates the credentials against it.
+   * POSTs credentials to a login endpoint (no Authorization header) and
+   * returns the JWT from the response. Shared by login() and loginPlex().
    */
-  async login(username, password, method) {
+  async _requestToken(path, body) {
     if (!this.url)
       throw clientError(
         "url_not_configured",
         "Watcharr URL is not configured.",
       );
-    const path = method === "jellyfin" ? "/auth/jellyfin" : "/auth/";
     let resp;
     try {
       resp = await fetch(this.url + "/api" + path, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username, password }),
+        body: JSON.stringify(body),
         credentials: "omit",
       });
     } catch (err) {
@@ -133,46 +127,24 @@ class WatcharrClient {
   }
 
   /**
-   * Finish a Plex OAuth login: send the plex.tv auth token + client
-   * identifier to Watcharr, which verifies access and returns the JWT token.
+   * Log in with Watcharr (default) or Jellyfin credentials.
+   * `method` is "" (Watcharr) or "jellyfin" (must be enabled on the server -
+   * Watcharr validates the credentials against it).
    */
-  async loginPlex(authToken, clientIdentifier) {
-    if (!this.url)
-      throw clientError(
-        "url_not_configured",
-        "Watcharr URL is not configured.",
-      );
-    let resp;
-    try {
-      resp = await fetch(this.url + "/api/auth/plex", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ token: authToken, clientIdentifier }),
-        credentials: "omit",
-      });
-    } catch (err) {
-      throw clientError(
-        "connection_failed",
-        "Connection to Watcharr failed: " + err.message,
-        { reason: err.message },
-      );
-    }
-    if (!resp.ok) {
-      let msg = "HTTP " + resp.status;
-      try {
-        const j = await resp.json();
-        if (j && j.error) msg = j.error;
-      } catch (_) {
-        /* no json body */
-      }
-      throw clientError("login_rejected", "Login failed: " + msg, {
-        reason: msg,
-      });
-    }
-    const data = await resp.json();
-    if (!data || !data.token)
-      throw clientError("no_token", "Login failed: no token in response.");
-    return data.token;
+  login(username, password, method) {
+    const path = method === "jellyfin" ? "/auth/jellyfin" : "/auth/";
+    return this._requestToken(path, { username, password });
+  }
+
+  /**
+   * Finish a Plex OAuth login: send the plex.tv auth token + client identifier
+   * to Watcharr, which verifies access and returns the JWT token.
+   */
+  loginPlex(authToken, clientIdentifier) {
+    return this._requestToken("/auth/plex", {
+      token: authToken,
+      clientIdentifier,
+    });
   }
 
   /** Master search (TMDB multi search). Returns the raw search response. */
@@ -185,8 +157,8 @@ class WatcharrClient {
   addWatched(tmdbId, contentType, status, watchedDate) {
     const body = {
       contentType, // "movie" | "tv"
-      // Watcharr expects an integer. Depending on the version, search
-      // can return the TMDB ID as a string – otherwise the server returns HTTP 400.
+      // Watcharr expects an integer; some versions return the TMDB ID as a
+      // string, which would make the server answer HTTP 400.
       tmdbId: Number(tmdbId),
       status, // "PLANNED" | "WATCHING" | "FINISHED" | ...
     };
@@ -199,7 +171,7 @@ class WatcharrClient {
     return this._request("PUT", "/watched/" + Number(id), patch);
   }
 
-  /** Mark a specific episode as watched (auto-updates the show status on Watcharr). */
+  /** Mark a specific episode as watched (auto-updates the show status). */
   addWatchedEpisode(
     watchedId,
     seasonNumber,
@@ -213,7 +185,7 @@ class WatcharrClient {
       episodeNumber: Number(episodeNumber),
       status,
     };
-    // Exact watch date (RFC3339) – the request struct expects the JSON field
+    // RFC3339 watch date – the request struct expects the JSON field
     // `watchedDate` (entity: WatchedEpisodeAddRequest).
     if (watchedDate) body.watchedDate = watchedDate;
     return this._request("POST", "/watched/episode", body);
@@ -230,9 +202,9 @@ class WatcharrClient {
 
   /**
    * Fetches the TV detail page including the `watched` entry with all watched
-   * episodes (`watched.watchedEpisodes`). This is the only Watcharr API that
-   * provides episode-level granularity (search / /watched list only have
-   * `watchingSeason`, i.e., the *last* watched episode).
+   * episodes (`watched.watchedEpisodes`) – the only Watcharr API with
+   * episode-level granularity (search and the /watched list only carry
+   * `watchingSeason`, i.e. the *last* watched episode).
    */
   getWatchedShow(tmdbId) {
     return this._request("GET", "/content/tv/" + Number(tmdbId));
@@ -240,8 +212,8 @@ class WatcharrClient {
 }
 
 /**
- * Minimal client for plex.tv's pin-based OAuth flow (v2 API).
- * Mirrors the flow Watcharr's own web UI uses (src/lib/util/plex.ts).
+ * Minimal client for plex.tv's pin-based OAuth flow (v2 API), mirroring the
+ * flow Watcharr's own web UI uses (src/lib/util/plex.ts).
  */
 const PlexTvAuth = {
   baseHeaders(clientId) {
@@ -287,10 +259,8 @@ const PlexTvAuth = {
     return { id: data.id, code: data.code };
   },
 
-  /**
-   * Poll a pin. Returns the auth token once the user has approved the login
-   * in the popup, or null while it is still pending.
-   */
+  /** Poll a pin. Returns the auth token once the user approved the login in
+   *  the plex.tv popup, or null while it is still pending. */
   async pollPin(clientId, pinId, pinCode) {
     let resp;
     try {

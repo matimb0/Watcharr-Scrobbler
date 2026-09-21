@@ -1,9 +1,9 @@
 /*
  * Watcharr Scrobbler – background script.
  *
- * Central place that stores the Watcharr connection (url + username + JWT token)
- * in `browser.storage.local` and routes messages from the content script,
- * the popup and the options page to the Watcharr API.
+ * Stores the Watcharr connection (URL + username + JWT token) in
+ * `browser.storage.local` and routes messages from the content scripts, the
+ * popup and the options page to the Watcharr API.
  */
 "use strict";
 
@@ -13,13 +13,9 @@ const DEFAULT_SETTINGS = {
   token: "",
   plexClientId: "", // stable plex.tv OAuth client identifier
   enabled: true,
-  threshold: 90, // % of a title watched before it counts as "finished"
-  // "" = no explicit choice yet -> UIs resolve to the browser language.
-  language: "",
-  // Self-hosted Jellyfin server.
-  // Stored normalized (origin + base path, no trailing slash); empty = the
-  // Jellyfin service stays inactive.
-  jellyfinUrl: "",
+  threshold: 90, // % watched before a title counts as "finished"
+  language: "", // "" = no explicit choice -> browser language
+  jellyfinUrl: "", // self-hosted server, normalized; "" = inactive
 };
 
 async function getSettings() {
@@ -35,9 +31,8 @@ async function saveSettings(settings) {
  * Jellyfin content script (dynamic registration)
  *
  * Jellyfin is self-hosted, so its URL cannot be listed in the manifest's
- * `content_scripts`. The content script is registered here for the configured
- * server (and re-registered whenever that server changes), plus injected into
- * already-open Jellyfin tabs so no reload is needed.
+ * `content_scripts`. The script is registered here for the configured server
+ * (re-registered when that server changes).
  * ------------------------------------------------------------------------ */
 const JELLYFIN_SCRIPT_ID = "watcharr-jellyfin";
 
@@ -52,15 +47,14 @@ async function registerJellyfinContentScript() {
   const svc = WatcharrServices.byId("jellyfin");
   const pattern = svc && svc.urlPattern;
 
-  // Firefox event pages (and the Chrome service worker) re-run this on every
-  // wake-up – so check the CURRENT registration first and only touch it when
-  // the configured server actually changed.
+  // This runs on every background wake-up, so check the current registration
+  // first and only touch it when the configured server actually changed.
   let current = null;
   try {
     const all = await browser.scripting.getRegisteredContentScripts();
     current = (all || []).find((s) => s && s.id === JELLYFIN_SCRIPT_ID) || null;
   } catch (_) {
-    /* getRegisteredContentScripts unavailable – fall through and re-register */
+    /* not available – fall through and re-register */
   }
 
   const upToDate =
@@ -105,13 +99,10 @@ async function registerJellyfinContentScript() {
   }
 }
 
-/** Applies the stored settings to the service registry and keeps the
- *  dynamically registered Jellyfin content script in sync with them.
- *  Tabs that are ALREADY open are handled by the central service-tab watcher
- *  (background/service-tabs.js): it injects the content script of every
- *  service into every open service tab, so a Jellyfin (or Netflix/Prime) tab
- *  that predates the configured server / the extension load needs no reload.
- */
+/** Applies the stored settings to the service registry and keeps the dynamic
+ *  Jellyfin registration in sync. Already-open tabs are handled by the central
+ *  service-tab watcher (background/service-tabs.js), which injects the content
+ *  script into every open service tab – so such a tab needs no reload. */
 async function syncJellyfin() {
   WatcharrServices.applySettings(await getSettings());
   await registerJellyfinContentScript();
@@ -119,8 +110,7 @@ async function syncJellyfin() {
 }
 
 /** Starts the central tab watcher and brings the Jellyfin registration (and
- *  the content scripts of already-open service tabs) up to date. Runs on every
- *  background start – Firefox event page and Chrome service-worker wake-up. */
+ *  the content scripts of already-open service tabs) up to date. */
 function startServiceTracking() {
   WatcharrServiceTabs.start();
   syncJellyfin().catch((err) => {
@@ -166,9 +156,9 @@ function uuid() {
 }
 
 /**
- * Build a client from stored settings and run `fn`.
- * Catches errors and turns them into a friendly response so callers (content
- * script / popup) always get `{ ok, data?, error?, errorCode?, authRequired? }`.
+ * Builds a client from the stored settings and runs `fn`. Errors become a
+ * friendly response so callers always get
+ * `{ ok, data?, error?, errorCode?, authRequired? }`.
  */
 async function withClient(fn) {
   const s = await getSettings();
@@ -194,8 +184,8 @@ async function withClient(fn) {
   }
 }
 
-/** Normalizes a thrown background Error into a message response carrying the
- *  stable i18n code (see background/history.js / watcharr-client.js). */
+/** Turns a thrown background Error into a response carrying the stable i18n
+ *  code (see background/history.js / background/watcharr-client.js). */
 function toErrorResponse(err) {
   return {
     ok: false,
@@ -205,7 +195,7 @@ function toErrorResponse(err) {
   };
 }
 
-async function handleMessage(msg, sender) {
+async function handleMessage(msg) {
   switch (msg && msg.type) {
     case "watcharr:login": {
       const settings = await getSettings();
@@ -310,9 +300,8 @@ async function handleMessage(msg, sender) {
 
     // -- Open service tabs (central watcher) -----------------------
     // The popup and the history page read their "which service is open?"
-    // state from here instead of polling the tabs API themselves: the watcher
-    // is event-driven (tabs.onCreated/onRemoved/onUpdated/onActivated) and
-    // therefore notices a newly opened or closed service immediately.
+    // state from here instead of polling the tabs API themselves – the
+    // watcher is event-driven and therefore always current.
     case "watcharr:serviceTabs:get":
       return { ok: true, ...WatcharrServiceTabs.getSnapshot() };
 
@@ -320,18 +309,14 @@ async function handleMessage(msg, sender) {
       return { ok: true, ...(await WatcharrServiceTabs.refresh()) };
 
     // What is playing in the focused service tab? Resolved through the
-    // watcher, which also guarantees that the content script is running in
-    // that tab (a plain tabs.sendMessage fails in tabs that were opened
-    // before the extension was loaded).
+    // watcher, which also guarantees that the content script runs in that tab
+    // (a plain tabs.sendMessage fails in tabs opened before the extension).
     case "watcharr:getCurrentItem": {
       try {
-        // Without an explicit service the FOCUSED one decides – and that has
-        // to be resolved freshly: the cached snapshot may be up to one
-        // debounce interval old (which is exactly the situation "tab just
-        // opened / just switched to" this feature is about). When no service
-        // tab is in front, the first OPEN one is used – a service tab in the
-        // background is still scrobbling, so the popup reports it instead of
-        // claiming that nothing is open.
+        // Without an explicit service the FOCUSED one decides – resolved
+        // freshly, because the cached snapshot may be one debounce interval
+        // old. Without a focused service tab the first OPEN one is used: a
+        // background service tab is still scrobbling.
         const snap = msg.service ? null : await WatcharrServiceTabs.refresh();
         const svcId = msg.service
           ? (WatcharrServices.byId(msg.service) || {}).id
@@ -472,8 +457,8 @@ async function handleMessage(msg, sender) {
       }
 
     case "watcharr:history:loadFile":
-      // Import path: the list is filled from a previously exported CSV/JSON file
-      // instead of the open service tab. Matching/selection/import are unchanged.
+      // Import path: the list is filled from an exported CSV/JSON file instead
+      // of the open service tab. Matching/selection/import are unchanged.
       try {
         WatcharrHistory.setOldestFirst(msg.oldestFirst === true);
         const data = await WatcharrHistory.loadFromFile(
@@ -528,10 +513,9 @@ async function handleMessage(msg, sender) {
       }
 
     case "watcharr:history:export": {
-      // Writes the COMPLETE history of the selected service to a file (done on
-      // the history page) and optionally adds the TMDB data of every entry –
-      // resolved through Watcharr's TMDB search. Nothing is written to
-      // Watcharr itself: this is an export, not an import.
+      // Writes the COMPLETE history of the selected service to a file, optionally
+      // enriched with TMDB data resolved through Watcharr's TMDB search. Nothing
+      // is written to Watcharr itself – this is an export, not an import.
       try {
         WatcharrHistory.setService(msg.service);
         const data = await WatcharrHistory.collectForExport({
@@ -566,12 +550,10 @@ async function handleMessage(msg, sender) {
         export: WatcharrHistory.getExportProgress(),
       };
 
-    // Amazon Prime Video history API calls. They are routed through the
-    // background because the content script's own fetch is bound by the page's
-    // CORS (the Amazon API hosts are cross-origin to primevideo.com and would
-    // otherwise fail with "NetworkError"). The background fetch is not subject
-    // to that CORS and – thanks to the <all_urls> host permission – sends the
-    // user's Prime Video session cookies.
+    // Amazon Prime Video history API calls. Routed through the background
+    // because the content script's own fetch is bound by the page CORS (the
+    // Amazon API hosts are cross-origin to primevideo.com). The background
+    // fetch is not subject to that and sends the user's session cookies.
     case "watcharr:primevideo:api": {
       try {
         const resp = await fetch(msg.url || "", {
@@ -585,11 +567,11 @@ async function handleMessage(msg, sender) {
         return { ok: true, text: await resp.text() };
       } catch (err) {
         const message = err.message || String(err);
-        // A blocked request ("NetworkError") means the extension has no host
-        // permission for that host. Logging which URL failed and which origins
-        // are granted at all is the decisive information: the Prime Video API
-        // is served from primevideo.com AND from the account's Amazon
-        // marketplace (see WatcharrServices.apiPatterns).
+        // "NetworkError" means the extension has no host permission for that
+        // host. Logging the failing URL and the granted origins is the
+        // decisive information: the Prime Video API is served from
+        // primevideo.com AND from the account's Amazon marketplace (see
+        // WatcharrServices.apiPatterns).
         console.error(
           "[watcharr-scrobbler] Prime Video API request failed:",
           msg.url,
@@ -628,7 +610,7 @@ async function handleMessage(msg, sender) {
 }
 
 browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  handleMessage(msg, sender)
+  handleMessage(msg)
     .then(sendResponse)
     .catch((err) => {
       console.error("[watcharr-scrobbler] background error:", err);
@@ -637,10 +619,9 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   return true; // keep the message channel open for the async response
 });
 
-// Keep the service registry (Jellyfin server) and the dynamically registered
-// Jellyfin content script in sync with the stored settings, and start the
-// central service-tab watcher. Runs on every background start (Firefox event
-// page / Chrome service-worker wake-up) – the watcher's listeners must be
-// registered synchronously so that the very first tab event of a wake-up is
-// not missed.
+// Keep the service registry (Jellyfin server) and the dynamic Jellyfin
+// registration in sync with the stored settings, and start the central
+// service-tab watcher. Runs on every background start – the watcher's listeners
+// must be registered synchronously so the first tab event of a wake-up is not
+// missed.
 startServiceTracking();

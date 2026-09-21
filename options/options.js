@@ -1,6 +1,7 @@
 /*
- * Watcharr Scrobbler – Options page.
- * Manages Watcharr URL, login (token), language selection, and scrobbling settings.
+ * Watcharr Scrobbler – options page.
+ * Manages Watcharr URL/login, language, scrobbling settings and the
+ * self-hosted Jellyfin server.
  */
 "use strict";
 
@@ -74,25 +75,26 @@ function populateLanguageOptions() {
 
 populateLanguageOptions();
 
+function setBanner(el, kind, text) {
+  if (!el) return;
+  el.className = "banner " + kind;
+  el.textContent = text;
+}
+
 function showBanner(kind, text) {
-  els.banner.className = "banner " + kind;
-  els.banner.textContent = text;
+  setBanner(els.banner, kind, text);
 }
 
 function showGeneralBanner(kind, text) {
-  els.generalBanner.className = "banner " + kind;
-  els.generalBanner.textContent = text;
+  setBanner(els.generalBanner, kind, text);
 }
 
 function showJellyfinBanner(kind, text) {
-  if (!els.jellyfinBanner) return;
-  els.jellyfinBanner.className = "banner " + kind;
-  els.jellyfinBanner.textContent = text;
+  setBanner(els.jellyfinBanner, kind, text);
 }
 
 function clearBanner() {
-  els.banner.className = "banner hidden";
-  els.banner.textContent = "";
+  setBanner(els.banner, "hidden", "");
 }
 
 /* ---------- Login method (Watcharr / Jellyfin / Plex) ---------- */
@@ -144,7 +146,7 @@ async function loginErrorMessage(err) {
 }
 
 // Emby is a server-side setting (useEmby). When on, Watcharr labels the same
-// "jellyfin" method as "emby" – mirror that on the button through i18n
+// "jellyfin" method as "emby" – mirror that on the button via i18n
 // (settings.providerEmby) instead of a hardcoded string.
 function refreshProviderLabels() {
   const btn = els.providerGroup.querySelector('[data-method="jellyfin"]');
@@ -568,16 +570,14 @@ function requestOrigins() {
 /**
  * Asks for access to the hosts that are only known from the settings: the
  * self-hosted Jellyfin server and the user's Watcharr instance. Both are
- * declared nowhere in the manifest (their URLs are typed in here), so the
- * permission has to be requested at runtime – and a runtime request needs a
- * user gesture, which the click on "Save"/leaving the field provides.
+ * declared nowhere in the manifest, so the permission has to be requested at
+ * runtime – and a runtime request needs a user gesture, which the click on
+ * "Save"/leaving the field provides.
  *
- * The request MUST start inside that gesture: every `await` before it (a
- * background round-trip, a permissions.contains check) ends the task, and
- * Firefox then drops the request without a prompt and without an error. So the
- * origins come from the form fields and permissions.request is the first call.
- *
- * If nothing is missing, no prompt is shown at all.
+ * The request MUST start inside that gesture: every `await` before it ends the
+ * task, and Firefox then drops the request without prompting or erroring. So
+ * the origins come from the form fields and permissions.request is the first
+ * call. If nothing is missing, no prompt is shown.
  */
 function requestHostAccess() {
   if (!browser.permissions || !browser.permissions.request) {
@@ -602,14 +602,13 @@ function requestHostAccess() {
 
 /**
  * Stores the Jellyfin server URL. The background normalizes it and keeps the
- * dynamically registered Jellyfin Content Script in sync (see
- * background/background.js – syncJellyfin); the normalized value is echoed
- * back here so the field shows exactly what is used for tab matching.
+ * dynamic Jellyfin registration in sync; the normalized value is echoed back so
+ * the field shows exactly what is used for tab matching.
  */
 async function saveJellyfinUrl() {
   if (!els.jellyfinUrl) return;
   const typed = els.jellyfinUrl.value.trim();
-  // The server URL decides which host the extension has to be allowed to read –
+  // The server URL decides which host the extension must be allowed to read –
   // ask for it right here, while this change event still counts as a user
   // gesture (see requestHostAccess).
   const accessPromise = requestHostAccess();

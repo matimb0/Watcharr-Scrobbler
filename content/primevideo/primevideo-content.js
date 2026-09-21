@@ -1,40 +1,37 @@
 /*
- * Amazon Prime Video – Scrobbler Content Script.
+ * Amazon Prime Video – scrobbler content script.
  *
- * Detects what's currently playing on Prime Video (movie vs. series,
- * season/episode), searches for the corresponding medium via the user's
- * Watcharr instance (TMDB ID) and keeps the Watcharr watchlist up to date:
- *   – Series starts            -> Create show as "WATCHING"
- *   – Episode > Threshold      -> Mark episode as watched (FINISHED)
- *   – Movie > Threshold        -> Mark movie as "FINISHED"
+ * Detects what is playing (movie vs. series, season/episode), finds the medium
+ * through the user's Watcharr instance (TMDB ID) and keeps the Watcharr
+ * watchlist up to date:
+ *   – series start          -> create show as "WATCHING"
+ *   – episode > threshold   -> mark episode as watched (FINISHED)
+ *   – movie > threshold     -> mark movie as FINISHED
  *
- * Unlike Netflix, Prime Video's player is a normal HTML5 <video> element in
- * the DOM and the running item (title / "Season 1, Ep. 4 …") is shown in the
- * player UI – so no MAIN-world probe is needed. Everything is read directly
- * from the page (mirrors the Amazon Prime implementation of Universal Trakt
- * Scrobbler).
+ * Unlike Netflix, Prime Video uses a normal HTML5 <video> element and shows the
+ * running item ("Season 1, Ep. 4 …") in the player UI – no MAIN-world probe is
+ * needed, everything is read from the DOM (mirrors Universal Trakt Scrobbler).
  *
- * All Watcharr API calls go through the Background Script (message router),
- * so the token never ends up in the Content Script / on the Prime Video page.
+ * All Watcharr API calls go through the background script, so the token never
+ * reaches the content script / the Prime Video page.
  */
 "use strict";
 
 (function () {
-  // Idempotency guard: if the Content Script is already running on this page
-  // (e.g., injected afterwards via browser.scripting), don't start again.
+  // Idempotency guard: an already running content script (e.g. injected later
+  // via browser.scripting) must not start twice.
   if (window.__watcharrPrimeContentInstalled__) return;
   window.__watcharrPrimeContentInstalled__ = true;
 
   const POLL_INTERVAL_MS = 1500;
   const DEFAULT_THRESHOLD = 90;
 
-  // Only create an item in Watcharr as "WATCHING" after this cumulative
-  // playback time – prevents briefly clicked videos (e.g. trailers) from
-  // cluttering the watchlist. (5 minutes)
+  // An item is only created as "WATCHING" after this much cumulative playback
+  // – prevents briefly clicked videos (e.g. trailers) from cluttering the list.
   const WATCHING_AFTER_SECONDS = 300;
 
   // ---------------------------------------------------------------------------
-  // Settings (come from Background via browser.storage.local)
+  // Settings (from the background via browser.storage.local)
   // ---------------------------------------------------------------------------
   const settings = {
     loaded: false,
@@ -211,7 +208,6 @@
         markedEpisodes: new Set(),
         markedEpisodesWatching: new Set(),
         movieFinished: false,
-        lastProgress: -1,
         watchedSeconds: 0,
         lastCurrentTime: null,
       };
@@ -425,8 +421,8 @@
         item.metadata = ident;
       }
 
-      // 0) Capture cumulative playback time: the counter only runs when the
-      //    playback position advances – i.e., is actively playing.
+      // 0) Capture cumulative playback time: the counter only runs while the
+      //    playback position advances (i.e. while actively playing).
       if (pb && pb.currentTime != null && isFinite(pb.currentTime)) {
         if (
           item.lastCurrentTime != null &&
@@ -457,8 +453,7 @@
       }
       if (!item.tmdb) return;
 
-      // 3) Ensure in Watcharr watchlist – only after the video has been
-      //    watched for longer than WATCHING_AFTER_SECONDS.
+      // 3) Ensure in Watcharr – only after WATCHING_AFTER_SECONDS of playback.
       if (item.watchedSeconds > WATCHING_AFTER_SECONDS) {
         const isTv = item.tmdb && item.tmdb.contentType === "tv";
         if (!item.watchedId) {
@@ -498,7 +493,6 @@
           await markEpisodeWatched(item, sn, en);
         }
       }
-      item.lastProgress = pb.progress;
     } finally {
       ticking = false;
     }
@@ -526,13 +520,10 @@
   };
 
   /**
-   * Runs an Amazon API request through the BACKGROUND script.
-   *
-   * The content script's own fetch is bound by the page's CORS, so requests
-   * to the cross-origin Amazon API hosts (atv-ps.primevideo.com etc.) are
-   * blocked with a "NetworkError". The background fetch is not subject to the
-   * page CORS and – thanks to the <all_urls> host permission – sends the
-   * user's Prime Video session cookies, so it behaves like the page itself.
+   * Runs an Amazon API request through the BACKGROUND script: the content
+   * script's own fetch is bound by the page CORS and blocked with a
+   * "NetworkError" for the cross-origin Amazon API hosts. The background fetch
+   * is not subject to that and sends the user's Prime Video session cookies.
    */
   async function amazonJson(url) {
     const resp = await browser.runtime.sendMessage({
@@ -682,16 +673,14 @@
   }
 
   // Incremental loading state for the history page: pages are requested by an
-  // ever increasing page number within one `loadId`; the loadId resets the
-  // buffer when a brand-new history load starts (e.g. "Reload").
+  // increasing page number within one `loadId`; a new loadId resets the buffer.
   const HISTORY_PAGE_SIZE = 20;
 
-  // Gentle pacing for the history crawl (mirrors the Netflix content script):
-  // ONE pause before a new Amazon history page is pulled – i.e. before every
-  // UI page of 20 entries that is not already buffered. This keeps e.g. the
-  // "oldest first" full load from crawling through hundreds of Amazon pages at
-  // full speed. The parallel metadata enrichment WITHIN a page is NOT
-  // throttled, so the page itself still loads quickly.
+  // Gentle pacing for the history crawl (mirrors Netflix): ONE pause before a
+  // new Amazon history page is pulled – i.e. before every UI page of 20 entries
+  // that is not already buffered. Keeps the "oldest first" full load from
+  // crawling hundreds of Amazon pages at full speed. The metadata enrichment
+  // WITHIN a page is not throttled, so a page still loads quickly.
   const HISTORY_PAGE_GAP_MS = 500;
   let lastHistoryPageAt = 0;
   async function historyThrottle() {
@@ -738,11 +727,9 @@
   }
 
   /**
-   * Runs `fn` over `items` with at most `limit` parallel workers and returns
-   * the results in input order. Prime Video needs one metadata request PER
-   * history entry (Amazon only exposes per-ASIN metadata – unlike Netflix,
-   * which returns a whole show in one call), so enriching 20 rows
-   * sequentially would be very slow.
+   * Runs `fn` over `items` with at most `limit` parallel workers, results in
+   * input order. Prime Video needs one metadata request PER entry (Amazon only
+   * exposes per-ASIN metadata), so sequential enrichment would be very slow.
    */
   async function mapConcurrent(items, limit, fn) {
     const results = new Array(items.length);
@@ -828,14 +815,14 @@
   }
 
   // ---------------------------------------------------------------------------
-  // Popup request: report the current element
+  // Popup request: report the currently playing item
   // ---------------------------------------------------------------------------
   browser.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (msg && msg.type === "watcharr:getCurrentItem") {
       sendResponse(currentSummary());
       return false;
     }
-    // Ping: checks if the Content Script is reachable in the tab.
+    // Ping: checks if the content script is reachable in the tab.
     if (msg && msg.type === "watcharr:ping") {
       sendResponse({ status: "ok" });
       return false;

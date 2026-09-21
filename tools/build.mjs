@@ -41,7 +41,8 @@ const distDir = join(root, "dist");
 const rootManifest = JSON.parse(
   readFileSync(join(root, "manifest.json"), "utf8"),
 );
-const addonId = rootManifest.browser_specific_settings?.gecko?.id?.split("@")[0];
+const addonId =
+  rootManifest.browser_specific_settings?.gecko?.id?.split("@")[0];
 const baseName = addonId || "watcharr-scrobbler";
 const FIREFOX_XPI = `${baseName}-firefox-${rootManifest.version}.xpi`;
 const CHROME_ZIP = `${baseName}-chrome-${rootManifest.version}.zip`;
@@ -52,9 +53,7 @@ const CHROME_ZIP = `${baseName}-chrome-${rootManifest.version}.zip`;
 // an older version is removed, so a name check limited to the current version
 // would nest the old ZIP inside the new XPI.
 const ROOT_PACKAGE_RE = new RegExp(
-  "^" +
-    baseName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") +
-    "-.*\\.(xpi|zip)$",
+  "^" + baseName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "-.*\\.(xpi|zip)$",
 );
 
 // Files/folders that are never part of a store package.
@@ -111,7 +110,7 @@ function cleanupOldPackages(browser, extension) {
   const prefix = `${baseName}-${browser}-`;
   for (const entry of readdirSync(root)) {
     if (entry.startsWith(prefix) && entry.endsWith(`.${extension}`)) {
-      console.log(`  entferne altes Paket: ${entry}`);
+      console.log(`  removing stale package: ${entry}`);
       unlinkSync(join(root, entry));
     }
   }
@@ -350,22 +349,18 @@ for (const [name, dir] of results) {
   console.log(`  ${name}: ${dir}`);
 }
 if (firefoxXpi) {
-  console.log(
-    `  Firefox-XPI (in Firefox ziehen = installieren): ${firefoxXpi}`,
-  );
+  console.log(`  Firefox XPI (drop into Firefox to install): ${firefoxXpi}`);
 }
 if (chromeZip) {
-  console.log(
-    `  Chrome-ZIP (direkt im Chrome Web Store hochladen): ${chromeZip}`,
-  );
+  console.log(`  Chrome ZIP (upload to the Chrome Web Store): ${chromeZip}`);
 }
 if (target === "chrome" || target === "all") {
   console.log(
-    "  → Chrome testen: chrome://extensions → „Entwicklermodus“ → „Entpackte Erweiterung laden“ → dist/chrome",
+    "  → Test in Chrome: chrome://extensions → enable Developer mode → Load unpacked → dist/chrome",
   );
 }
 if (target === "firefox" || target === "all") {
   console.log(
-    "  → Firefox-XPI in Firefox ziehen (temporär installieren) oder bei addons.mozilla.org einreichen.",
+    "  → Test in Firefox: drag the XPI into Firefox (temporary install), or submit it to addons.mozilla.org.",
   );
 }

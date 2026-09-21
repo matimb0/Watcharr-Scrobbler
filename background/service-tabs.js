@@ -1,39 +1,30 @@
 /*
  * Watcharr Scrobbler – central service-tab watcher.
  *
- * Single source of truth for the question "which of the supported streaming
- * services (Netflix / Amazon Prime Video / Jellyfin) currently have an open
- * tab, and which one is in front?". It lives in the background (Firefox event
- * page + Chrome service worker) so that every context – popup, history page,
- * history loader – gets the SAME, always up-to-date answer instead of running
- * its own polling.
+ * Single source of truth for "which supported services (Netflix / Prime Video /
+ * Jellyfin) have an open tab, and which one is in front?". Lives in the
+ * background so every context (popup, history page) gets the same, always
+ * current answer instead of polling the tabs API itself.
  *
- * How it stays current:
- *   - tabs.onCreated   / onRemoved  -> a tab appeared / disappeared,
- *   - tabs.onUpdated   (url/complete) -> a tab navigated to or away from a
- *                                        service (this also covers SPA
- *                                        navigations), a loading tab finished,
- *   - tabs.onActivated / windows.onFocusChanged -> the "focused" service
- *                                        changed (two windows, two services).
- *   - tabs.onReplaced  (Firefox)    -> prerender/swap replaced a tab.
- * Event bursts are debounced into one recompute; only an ACTUAL change is
- * broadcast, so listeners never get spammed.
+ * Stays current through tabs.onCreated/onRemoved/onUpdated (url + complete),
+ * tabs.onActivated, windows.onFocusChanged/onRemoved and – on Firefox –
+ * tabs.onReplaced. Event bursts are debounced into one recompute and only an
+ * actual change is broadcast.
  *
- * Additionally it makes sure the per-service content script runs in every
- * open service tab (ping, then scripting.executeScript). That is what makes a
- * tab that was already open when the extension was loaded/reloaded scrobble
- * without a manual F5 – for Netflix and Prime Video as well, not just Jellyfin.
+ * It also keeps the per-service content script running in every open service
+ * tab (ping, then scripting.executeScript), so a tab that was already open when
+ * the extension loaded scrobbles without a manual reload.
  *
  * Public API (global `WatcharrServiceTabs`):
  *   start()             – attach the tab/window listeners (idempotent).
- *   refresh()           – recompute NOW, resolves with the fresh snapshot.
+ *   refresh()           – recompute now, resolves with the fresh snapshot.
  *   getSnapshot()       – cached snapshot (never queries tabs).
  *   findServiceTab(id)  – tab id of a service with a running content script.
- *   isTabReady(tabId)   – true when that tab already answered a ping.
+ *   forgetTab(tabId)    – drop the cached "content script running" flag.
  *
  * Snapshot shape (JSON-safe, used verbatim in messages):
- *   { revision, activeServiceId, openServiceIds, services: [
- *       { id, name, open, tabs: [ { id, windowId, active, url } ] } ] }
+ *   { revision, activeServiceId, openServiceIds,
+ *     services: [ { id, name, open, tabs: [ { id, windowId, active, url } ] } ] }
  */
 "use strict";
 
@@ -105,15 +96,13 @@
   }
 
   /**
-   * The open tabs of one service, matched with the service registry's own URL
-   * logic (`WatcharrServices.byUrl`) instead of a browser URL pattern: the two
-   * do not always agree, and the Jellyfin base path cannot be expressed as a
-   * pattern at all. The tab listing itself is shared by all services (one
-   * query instead of one per service).
+   * Open tabs of one service, matched with the registry's own URL logic
+   * (`WatcharrServices.byUrl`) rather than a browser URL pattern: the two do
+   * not always agree, and the Jellyfin base path cannot be expressed as a
+   * pattern. The tab listing is shared by all services (one query total).
    *
-   * Note that a tab is only listed with its URL when this context is allowed
-   * to read it – the caller therefore falls back to the pattern query (see
-   * queryServiceTabs), which the browser matches on its own.
+   * A tab only carries its URL when this context may read it – hence the
+   * `queryServiceTabs` fallback, which the browser matches itself.
    */
   function tabsOfService(S, svc, tabs) {
     return tabs.filter((tab) => {
@@ -123,8 +112,8 @@
     });
   }
 
-  /** Fallback for tabs the listing cannot see: one query per service, matched
-   *  by the browser against the service's tab URL pattern. */
+  /** Fallback for tabs the plain listing cannot see: one query per service,
+   *  matched by the browser against the service's URL pattern. */
   async function queryServiceTabs(svc) {
     try {
       const tabs = await browser.tabs.query({ url: svc.urlPattern });
@@ -187,10 +176,9 @@
    * ---------------------------------------------------------------------- */
 
   /**
-   * Makes sure the content script of `svc` runs in `tab`:
-   * first a ping (cheap, and it tells us the script is already there), only
-   * then an actual injection. `force` skips the "wait until the page finished
-   * loading" rule – used when a caller needs a tab right now.
+   * Makes sure the content script of `svc` runs in `tab`: a ping first (cheap,
+   * and it proves the script is already there), only then an injection.
+   * `force` skips the "wait until the page finished loading" rule.
    * Resolves with true when the tab has a running content script.
    */
   function ensureContentScript(svc, tab, force) {
@@ -199,9 +187,9 @@
       return Promise.resolve(false);
     }
     if (readyTabs.has(tab.id)) return Promise.resolve(true);
-    // A page that is still loading gets its content script from the manifest
-    // (Netflix/Prime) or from the dynamic registration (Jellyfin); injecting
-    // now would only race with that. onUpdated ("complete") brings us back.
+    // A loading page gets its content script from the manifest (Netflix/Prime)
+    // or the dynamic registration (Jellyfin); injecting now would race with
+    // that. onUpdated ("complete") brings us back.
     if (!force && tab.status && tab.status !== "complete") {
       return Promise.resolve(false);
     }
@@ -246,8 +234,8 @@
   async function computeSnapshot() {
     const S = registry();
     // One listing for all services; the per-service pattern query stays as a
-    // second source, because it is matched by the browser itself and therefore
-    // also sees tabs whose URL this context cannot read (see tabsOfService).
+    // second source because the browser matches it itself and therefore also
+    // sees tabs whose URL this context cannot read (see tabsOfService).
     const allTabs = await queryAllTabs();
     const services = [];
     for (const svc of detectableServices()) {
@@ -297,11 +285,10 @@
   /**
    * Recomputes the snapshot; concurrent calls share one run.
    *
-   * A caller that arrives while a run is in flight is answered with that run's
-   * result *and* triggers one more run afterwards: the run in flight may have
-   * started before the change the caller is interested in (a service tab that
-   * was still loading its URL, for example), so handing out the older cached
-   * snapshot here would report a state that is already outdated.
+   * A caller arriving while a run is in flight gets that run's result *and*
+   * triggers one more run afterwards: the run in flight may have started before
+   * the change the caller cares about (a service tab still loading its URL, for
+   * example), so the cached snapshot could already be outdated.
    */
   function recompute() {
     const stuck = inflight && Date.now() - inflightStartedAt > STUCK_RUN_MS;
@@ -373,11 +360,11 @@
         if (!changeInfo) return;
         // A navigation replaces the page – and with it the content script.
         if (changeInfo.url) readyTabs.delete(tabId);
-        // A newly opened tab is reported as "loading" first – often BEFORE its
-        // URL is known. Reacting to that as well means the tab is picked up the
-        // moment it becomes a service tab; without it an opening that reports
-        // no URL change would stay invisible until the page finished loading.
-        // (The debounce keeps the extra tab queries cheap.)
+        // A newly opened tab reports "loading" first – often BEFORE its URL is
+        // known. Reacting to that too picks the tab up the moment it becomes a
+        // service tab; otherwise an opening without a URL change would stay
+        // invisible until the page finished loading. (The debounce keeps the
+        // extra queries cheap.)
         if (changeInfo.url || changeInfo.status) schedule();
       });
       browser.windows.onFocusChanged?.addListener(() => schedule());
@@ -390,9 +377,9 @@
 
   /**
    * Recomputes now (cancels a pending debounce) and resolves with the fresh
-   * state. Waits for a run that is already in flight first – a caller asking
-   * "which services are open right now?" must not be answered with the result
-   * of a scan that started before the change it wants to know about.
+   * state. Waits for a run that is already in flight first: a caller asking
+   * "which services are open right now?" must not get the result of a scan that
+   * started before the change it wants to know about.
    */
   async function refresh() {
     while (inflight) await inflight.catch(() => {});
@@ -408,11 +395,6 @@
     return snapshot;
   }
 
-  /** True when the content script of `tabId` already answered a ping. */
-  function isTabReady(tabId) {
-    return readyTabs.has(tabId);
-  }
-
   /** Drops the cached "content script is running" flag of a tab. Used when a
    *  message to that tab failed although it was considered ready (the script
    *  was unloaded / the page was replaced) – the next lookup re-injects it. */
@@ -422,8 +404,8 @@
 
   /**
    * Tab of `serviceId` that has a running content script (injects it if
-   * needed). Prefers the focused tab of that service. Returns the tab id, or
-   * null when the service has no open tab at all.
+   * needed), preferring the focused tab of that service. Returns the tab id,
+   * or null when the service has no open tab at all.
    */
   async function findServiceTab(serviceId) {
     const S = registry();
@@ -445,7 +427,6 @@
     refresh,
     getSnapshot,
     findServiceTab,
-    isTabReady,
     forgetTab,
   };
 })();

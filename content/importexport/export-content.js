@@ -1,19 +1,16 @@
 /*
- * Export (service → file) – building and serializing of a history export.
+ * Export (service -> file) – building and serializing a history export.
  *
- * Side of the import/export feature that turns service entries into export
- * rows and those rows into the CSV/JSON text of the export file. The files
- * live together with the rest of the feature in content/importexport/ – one
- * file per direction, exactly like every streaming service keeps its logic in
- * content/<service>/<service>-content.js.
+ * Turns service entries into export rows and those rows into the CSV/JSON text
+ * of the export file. The import/export feature lives in
+ * content/importexport/, one file per direction.
  *
- * The functions are pure data processing (no DOM), so the file is loaded where
- * it is needed as a classic script:
- *   – background (background/history.js) builds the export rows,
+ * Pure data processing (no DOM), loaded as a classic script where needed:
+ *   – background/history.js builds the export rows,
  *   – the history page serializes them into CSV/JSON text.
- * It exposes the global `WatcharrExport`.
+ * Exposes the global `WatcharrExport`.
  *
- * The CSV/JSON shapes deliberately stay compatible with the import side
+ * The CSV/JSON shapes stay compatible with the import side
  * (content/importexport/import-content.js) and with other services.
  */
 "use strict";
@@ -23,7 +20,7 @@
   function toIsoDateString(v) {
     if (v == null) return null;
     if (v instanceof Date) return isNaN(v.getTime()) ? null : v.toISOString();
-    const d = new Date(v); // ISO-8601 string or numeric ms
+    const d = new Date(v);
     return isNaN(d.getTime()) ? null : d.toISOString();
   }
 
@@ -136,22 +133,11 @@
     );
   }
 
-  const api = {
+  globalThis.WatcharrExport = {
     EXPORT_COLUMNS,
     entryToExportRow,
     toCsv,
     toJson,
     filename,
-    exportIdType,
   };
-
-  // Expose on whatever global object this file is loaded into (extension page
-  // window, Firefox event page, Chrome service worker).
-  const root =
-    typeof globalThis !== "undefined"
-      ? globalThis
-      : typeof window !== "undefined"
-        ? window
-        : self;
-  root.WatcharrExport = api;
 })();

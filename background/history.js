@@ -1,77 +1,66 @@
 /*
- * History Workspace (Background).
+ * History workspace (background).
  *
- * Loads the viewing history of the currently selected service (Netflix /
- * Amazon Prime Video) through its Content Script, builds a comparison list
- * "Service ↔ Watcharr" from it (with TMDB resolution via Watcharr search),
- * allows correcting individual matches, and imports selected titles into
- * Watcharr.
+ * Loads the viewing history of the selected service (Netflix / Prime Video /
+ * Jellyfin) through its content script, builds a comparison list
+ * "service ↔ Watcharr" from it (TMDB resolution via Watcharr search), allows
+ * correcting single matches and imports selected titles into Watcharr.
  *
- * Loaded as a classic script BEFORE background.js and provides the
- * global `WatcharrHistory` object (uses `WatcharrClient` from
- * watcharr-client.js and the service registry from services.js).
+ * Loaded as a classic script before background.js; exposes `WatcharrHistory`
+ * and uses `WatcharrClient`, `WatcharrServices`, `WatcharrImportExport` and
+ * `WatcharrExport`.
  */
 "use strict";
 
 const WatcharrHistory = (() => {
-  // Incremental loading: EVERY view of the service is a separate entry (NO
-  // grouping by series). BATCH_SIZE elements are always fetched from the
-  // service, matched, and then displayed on the page.
+  // Every service view is a separate entry (no grouping by series). BATCH_SIZE
+  // entries are fetched, matched and then shown at once.
   const BATCH_SIZE = 20;
-  // Safety cap for "oldest first" mode: the services normally end with an
-  // empty page much earlier – this only guards against an endless loop.
+  // Safety cap for "oldest first": the services normally end with an empty
+  // page much earlier – this only guards against an endless loop.
   const MAX_HISTORY_PAGES = 500;
-  // Parallel Watcharr/TMDB lookups while enriching an export. Watcharr proxies
-  // the TMDB search; 4 parallel requests finish a large history quickly
-  // without hammering the instance.
+  // Parallel Watcharr/TMDB lookups while enriching an export: 4 finish a large
+  // history quickly without hammering the instance.
   const EXPORT_MATCH_CONCURRENCY = 4;
 
-  let items = []; // all entries loaded so far (1 service view = 1 row)
-  const itemMap = new Map(); // lookup for fast item.key -> item; important for larger histories
+  let items = []; // entries loaded so far (1 service view = 1 row)
+  const itemMap = new Map(); // key -> item, for larger histories
   let page = 0; // next service page to load
-  let total = 0; // number of entries loaded so far
+  let total = 0; // entries loaded so far
   let done = false; // complete service history loaded?
-  let loading = false; // currently loading a batch?
-  let loadError = null; // last error when loading
+  let loading = false; // batch currently loading?
+  let loadError = null; // last load error (message)
   let loadErrorCode = null; // stable i18n code of the last load error
-  let seq = 0; // sequential key for stable item keys
-  // Session display order: show the history OLDEST first? The services return
-  // the newest entry first (page 0 = top of the list), so this mode loads the
-  // COMPLETE history once and serves it to the UI starting with the oldest
-  // entry (oldest at the very top).
+  let seq = 0; // sequence for stable item keys
+  // Show the history OLDEST first? The services return newest first, so this
+  // mode loads the complete history once and serves it oldest first.
   let oldestFirst = false;
-  // oldest-first mode: how many entries have already been handed to the UI.
-  // After the full load `items` is stored oldest -> newest.
+  // Oldest-first mode: entries already handed to the UI. After the full load
+  // `items` is stored oldest -> newest.
   let delivered = 0;
-  // Set while a (long) "oldest first" full-history load is running so that
-  // the user can abort it via the button on the history page.
+  // Set while a long "oldest first" full load runs so the user can abort it.
   let cancelRequested = false;
   // Running file export of the complete history (same page crawl as the
-  // "oldest first" full load, but WITHOUT any Watcharr lookup – an export
-  // therefore also works without a configured Watcharr connection).
+  // "oldest first" load, but WITHOUT Watcharr lookups – so it also works
+  // without a configured Watcharr connection).
   let exportRunning = false;
-  // Entries collected by the running export (progress display).
-  let exportCount = 0;
-  // Progress detail of the running export: phase ("collect" while crawling the
-  // service pages, "match" while adding TMDB data via Watcharr), how many rows
-  // have been looked up, how many of them were matched and the row total.
+  let exportCount = 0; // entries collected so far
+  // Progress detail of a running export: phase ("collect" = crawling the
+  // service pages, "match" = adding TMDB data), rows looked up, rows matched
+  // and the row total.
   let exportPhase = "";
   let exportProcessed = 0;
   let exportMatched = 0;
   let exportTotal = 0;
 
-  // Service whose history is currently being loaded (id from WatcharrServices).
-  let serviceId = "netflix";
-  // Where the current list comes from: "service" (crawled from the open
-  // service tab) or "file" (entries read from an exported CSV/JSON file).
+  let serviceId = "netflix"; // service whose history is being loaded
+  // Where the current list comes from: "service" (crawled from the open tab)
+  // or "file" (entries read from an exported CSV/JSON file).
   let source = "service";
-  // Parsed entries of the loaded file (only used while source === "file").
-  let fileRows = [];
-  // Name of the loaded file (shown on the history page).
-  let fileName = "";
-  // Identifies one fresh history load. It is passed to the content scripts so
-  // that paged services (Amazon Prime Video) can reset their internal history
-  // buffer when a new load starts. Netflix ignores it.
+  let fileRows = []; // parsed rows of the loaded file (source === "file")
+  let fileName = ""; // name of the loaded file (shown on the history page)
+  // Identifies one fresh history load. Passed to the content scripts so paged
+  // services (Prime Video) can reset their internal buffer. Netflix ignores it.
   let historyLoadId = 0;
 
   function refreshItemMap() {
@@ -82,9 +71,9 @@ const WatcharrHistory = (() => {
   const log = (...a) => console.log("[watcharr-bg]", ...a);
   const logErr = (...a) => console.error("[watcharr-bg]", ...a);
 
-  /** Builds a user-facing Error carrying a stable i18n code + params. The UI
-   *  translates these codes (see history/history.js), so extension-authored
-   *  error copy is localized instead of shown raw. */
+  /** Builds a user-facing Error with a stable i18n code + params. The UI
+   *  translates these codes (see history/history.js) instead of showing raw
+   *  extension-authored text. */
   function userError(code, message, params) {
     const e = new Error(message);
     e.userCode = code;
@@ -109,8 +98,7 @@ const WatcharrHistory = (() => {
     if (WatcharrServices.byId(id)) serviceId = id;
   }
 
-  /** Chooses where the next load comes from: the open service tab ("service")'
-   *  or a previously exported file ("file"). */
+  /** Chooses where the next load comes from: "service" or "file". */
   function setSource(v) {
     source = v === "file" ? "file" : "service";
   }
@@ -121,10 +109,10 @@ const WatcharrHistory = (() => {
   }
 
   /**
-   * Tabs of one service. Two sources are combined, because they fail for
-   * different reasons: the registry's own URL matching needs the tab URL to be
-   * readable, while the tab URL pattern is matched by the browser itself and
-   * therefore also finds tabs whose URL this context cannot see.
+   * Tabs of one service. Both sources are combined because they fail for
+   * different reasons: the registry's URL matching needs a readable tab URL,
+   * while the URL pattern is matched by the browser itself and therefore also
+   * finds tabs whose URL this context cannot see.
    */
   async function serviceCandidates(svc) {
     const byId = new Map();
@@ -165,10 +153,9 @@ const WatcharrHistory = (() => {
   }
 
   /**
-   * Finds a tab of the current service where the Content Script is running.
-   * If no Content Script is reachable in any tab (e.g., because the tab was
-   * already open when the extension was loaded), it is injected afterwards
-   * via browser.scripting. Returns the tab ID or throws an error.
+   * Finds a tab of the current service where the content script is running,
+   * injecting it if needed (e.g. the tab was open before the extension loaded).
+   * Returns the tab id or throws.
    */
   async function ensureServiceTab() {
     // The Jellyfin server URL is part of the settings – applying them here
@@ -294,7 +281,7 @@ const WatcharrHistory = (() => {
     );
   }
 
-  /** Fetches a single page of the service history through the Content Script. */
+  /** Fetches one page of the service history through the content script. */
   async function historyPage(pageIndex) {
     const tabId = await ensureServiceTab();
     log(
@@ -343,11 +330,9 @@ const WatcharrHistory = (() => {
 
   /**
    * Returns one page of entries for the CURRENT source:
-   *  - "service": fetched from the open service tab (Content Script),
-   *  - "file":    slice of the loaded file – all entries are already in
-   *               memory, so paging is purely local and instant.
-   * The rest of the module (matching, batching, import) does not need to know
-   * where an entry came from.
+   *  - "service": fetched from the open service tab (content script),
+   *  - "file":    slice of the loaded file (paging is purely local).
+   * The rest of the module does not need to know where an entry came from.
    */
   async function entriesForPage(pageIndex) {
     if (source !== "file") return historyPage(pageIndex);
@@ -367,10 +352,10 @@ const WatcharrHistory = (() => {
     };
   }
   /**
-   * Normalizes a watched date coming from the content script to an ISO-8601
-   * string. Never assume a `Date` instance survives the message channel:
-   * depending on the browser (Firefox vs Chrome) it may already be a string
-   * or a number – so we never call `.toISOString()` on the raw value.
+   * Normalizes a watched date from the content script to an ISO-8601 string.
+   * Never assume a Date instance survives the message channel: depending on the
+   * browser it may already be a string or a number, so `.toISOString()` is
+   * never called on the raw value.
    */
   function toIsoDateString(v) {
     if (v == null) return null;
@@ -381,7 +366,7 @@ const WatcharrHistory = (() => {
 
   /**
    * Returns an ISO-8601 string that is `minutes` before the given ISO-8601
-   * string (or null if no usable date is given).
+   * string (or null when no usable date is given).
    */
   function subtractMinutes(iso, minutes) {
     if (iso == null) return null;
@@ -390,32 +375,28 @@ const WatcharrHistory = (() => {
     return new Date(d.getTime() - minutes * 60000).toISOString();
   }
 
-  /** Builds a separate list entry from a Netflix view (no grouping). */
+  /** Builds a separate list entry from a service view (no grouping). */
   function entryToItem(entry) {
+    const isTv = !!entry.isTv;
     return {
       key: "h" + seq++,
-      isTv: !!entry.isTv,
+      isTv,
       title: entry.title,
       year: entry.year || null,
       date: toIsoDateString(entry.date),
-      season: entry.isTv ? (entry.season != null ? entry.season : null) : null,
-      episode: entry.isTv
-        ? entry.episode != null
-          ? entry.episode
-          : null
-        : null,
-      // TMDB data known in advance (imported file): the row is then matched on
+      season: isTv && entry.season != null ? entry.season : null,
+      episode: isTv && entry.episode != null ? entry.episode : null,
+      // TMDB data known in advance (imported file): the row is matched on
       // exactly this TMDB ID instead of guessing by title/year.
       tmdbHint: entry.tmdbHint || null,
       match: null,
       matchError: null,
       matchErrorCode: null,
-      // Status of the specific episode in Watcharr (null | "FINISHED" | "WATCHING" | ...)
+      // Status of this episode in Watcharr (null | "FINISHED" | "WATCHING" | …)
       episodeStatus: null,
-      // false = unknown (fetch failed / no episode info)
-      episodeStatusKnown: false,
+      episodeStatusKnown: false, // false = unknown (fetch failed / no episode info)
       // True only when Watcharr records this exact episode as FINISHED at the
-      // same date+time as this Netflix row (activity customDate = watchedDate).
+      // same date+time as this service row.
       episodeDateMatched: false,
       selected: false,
       status: "pending",
@@ -456,13 +437,12 @@ const WatcharrHistory = (() => {
   }
 
   /**
-   * Resolves a row whose TMDB ID is already known (imported file). The title
-   * from the file is searched through Watcharr and the result with EXACTLY the
-   * file's TMDB ID is used – no guessing by title, and no fallback to a
-   * different medium. The search result also carries the Watcharr state
-   * (`watched`), which the import needs to update an existing entry instead of
-   * creating a duplicate. Returns null when the ID cannot be resolved (the UI
-   * then offers "Change match" for that row).
+   * Resolves a row whose TMDB ID is already known (imported file): search the
+   * file's title through Watcharr and use the result with EXACTLY that TMDB ID
+   * – no guessing by title, no fallback to another medium. The result also
+   * carries the Watcharr state (`watched`), which the import needs to update an
+   * existing entry instead of creating a duplicate. Returns null when the ID
+   * cannot be resolved (the UI then offers "Change match").
    */
   async function resolveMatchByTmdbId(it) {
     const hint = it.tmdbHint;
@@ -540,10 +520,9 @@ const WatcharrHistory = (() => {
   }
 
   /**
-   * Episode status cache per TMDB ID: Many history lines belong to the same
-   * series, so each series is queried only once. The value is a Promise
-   * for { ok, episodes, finishedByEp } – so parallel resolutions share the
-   * same request.
+   * Episode status cache per TMDB ID: many history rows belong to the same
+   * series, so each is queried only once. The value is a Promise for
+   * { ok, episodes, finishedByEp }, so parallel resolutions share one request.
    */
   const watchedEpisodesCache = new Map();
 
@@ -562,10 +541,9 @@ const WatcharrHistory = (() => {
         episodeNumber: Number(e.episodeNumber),
         status: e.status || "FINISHED",
       }));
-      // Exact watch events per episode: FINISHED activities (EPISODE_ADDED /
-      // EPISODE_STATUS_CHANGED) whose data.status is FINISHED and whose
-      // customDate is set (= the watchedDate we passed to the API). This is
-      // the exact Netflix date+time the episode was recorded as finished.
+      // Exact watch events per episode: FINISHED activities whose customDate is
+      // set (= the watchedDate we passed to the API) – i.e. the exact date+time
+      // the episode was recorded as finished.
       const finishedByEp = new Map(); // epKey -> Set<epoch seconds>
       const acts = w && Array.isArray(w.activity) ? w.activity : [];
       for (const a of acts) {
@@ -605,13 +583,11 @@ const WatcharrHistory = (() => {
   }
 
   /**
-   * Determines whether the specific episode (it.season / it.episode) of the
-   * matched series is already recorded in Watcharr at THIS exact Netflix
-   * date+time. Sets:
+   * Checks whether the specific episode (it.season / it.episode) of the matched
+   * series is already recorded in Watcharr at THIS exact date+time. Sets:
    *  - it.episodeStatus: current status of the episode (or null),
-   *  - it.episodeDateMatched: true when a FINISHED activity (EPISODE_ADDED /
-   *    EPISODE_STATUS_CHANGED, data.status = FINISHED) has a customDate equal
-   *    to the row's date+time (customDate = watchedDate when it was passed),
+   *  - it.episodeDateMatched: true when a FINISHED activity has a customDate
+   *    equal to the row's date+time (customDate = watchedDate),
    *  - it.episodeStatusKnown (false = unknown).
    */
   async function resolveItemEpisodeStatus(it) {
@@ -671,9 +647,9 @@ const WatcharrHistory = (() => {
   }
 
   /**
-   * Starts a fresh history load: loads the FIRST BATCH_SIZE entries
-   * from the selected service, resolves their matches and returns them
-   * immediately. Further entries come later via `more()` when scrolling.
+   * Starts a fresh history load: loads the FIRST BATCH_SIZE entries from the
+   * selected service, resolves their matches and returns them. Further entries
+   * come later via `more()` when scrolling.
    */
   async function load() {
     log("load: starting history load for", serviceId);
@@ -727,7 +703,7 @@ const WatcharrHistory = (() => {
     };
   }
 
-  /** Loads the next BATCH from the service, resolves the matches, returns it. */
+  /** Loads the next batch from the service, resolves the matches, returns it. */
   async function fetchMore(limit) {
     if (loading || done) return { items: [], total, done };
     loading = true;
@@ -760,11 +736,11 @@ const WatcharrHistory = (() => {
   }
 
   /**
-   * Oldest-first mode: loads the COMPLETE history of the selected service
-   * (every page), then hands it to the UI starting with the oldest entry.
-   * Metadata enrichment happens per page in the Content Script; the Watcharr
-   * match lookup is done lazily per delivered chunk (same amount of requests
-   * as in the normal incremental mode – just when the rows are actually shown).
+   * Oldest-first mode: loads the COMPLETE history of the selected service, then
+   * hands it to the UI starting with the oldest entry. Metadata enrichment
+   * happens per page in the content script; the Watcharr match lookup runs
+   * lazily per delivered chunk (same number of requests as the incremental
+   * mode, just when the rows are actually shown).
    */
   async function loadEntireHistory() {
     if (loading) return { items: [], total, done };
@@ -808,7 +784,7 @@ const WatcharrHistory = (() => {
     }
   }
 
-  /** Oldest-first: returns the next chunk of the loaded history (oldest first). */
+  /** Oldest-first: returns the next chunk of the loaded history. */
   async function deliverBatch() {
     const chunk = items.slice(delivered, delivered + BATCH_SIZE);
     delivered += chunk.length;
@@ -830,14 +806,13 @@ const WatcharrHistory = (() => {
   }
 
   /** Number of service entries fetched so far (progress display). While an
-   *  export is running it reports the collected entries, otherwise the
-   *  entries fetched by the running history load. */
+   *  export runs it reports the collected entries instead. */
   function getLoadProgress() {
     return exportRunning ? exportCount : items.length;
   }
 
-  /** Progress DETAIL of the running export (phase + match counters) so the UI
-   *  can distinguish "crawling the history" from "adding TMDB data". */
+  /** Progress DETAIL of a running export (phase + match counters), so the UI
+   *  can tell "crawling the history" apart from "adding TMDB data". */
   function getExportProgress() {
     return {
       running: exportRunning,
@@ -849,13 +824,12 @@ const WatcharrHistory = (() => {
   }
 
   /**
-   * Resolves ONE export row against TMDB – through the user's Watcharr
-   * instance, which proxies the TMDB search (same path the history matching
-   * uses). Returns the match (TMDB ID, type, title, poster, year) or null.
+   * Resolves ONE export row against TMDB through the user's Watcharr instance
+   * (which proxies the TMDB search – same path the history matching uses).
+   * Returns the match or null.
    *
-   * `cache` holds one Promise per "title|year|type": every episode of the same
-   * series shares one lookup, so a long history only needs a handful of
-   * requests.
+   * `cache` holds one Promise per "title|year|type", so every episode of the
+   * same series shares one lookup and a long history needs only a few requests.
    */
   function lookupExportTmdb(row, client, cache) {
     const key = normTitle(row.title) + "|" + (row.year || "") + "|" + row.type;
@@ -906,7 +880,7 @@ const WatcharrHistory = (() => {
   /**
    * Adds TMDB data (ID, type, title, year) to all export rows by searching
    * through the Watcharr instance. Runs with limited concurrency so a large
-   * history does not flood the Watcharr instance; `cancelRequested` aborts it.
+   * history does not flood the instance; `cancelRequested` aborts it.
    */
   async function enrichExportRows(rows, client) {
     const cache = new Map();
@@ -929,13 +903,11 @@ const WatcharrHistory = (() => {
 
   /**
    * Loads the COMPLETE history of the selected service for a FILE EXPORT and –
-   * optionally – adds the TMDB data of every entry (resolved through the
-   * Watcharr instance), so the file can be imported by other services.
+   * optionally – adds the TMDB data of every entry (resolved through Watcharr).
    *
-   * Walks the same pages as `loadEntireHistory()`, but never writes anything
-   * to Watcharr: no watched entry is created, no import happens. Without
-   * `options.enrich` the export needs no Watcharr connection at all.
-   * `getLoadProgress()` / `getExportProgress()` report the progress,
+   * Walks the same pages as `loadEntireHistory()`, but never writes to
+   * Watcharr. Without `options.enrich` it needs no Watcharr connection at all.
+   * `getLoadProgress()` / `getExportProgress()` report progress,
    * `cancelHistoryLoad()` aborts crawl and matching.
    */
   async function collectForExport(options) {
@@ -1027,17 +999,16 @@ const WatcharrHistory = (() => {
     }
   }
 
-  // -- Import from a file (export → import into Watcharr) ---------------------
-  // Instead of the open service tab, the list can be filled from a previously
-  // exported CSV/JSON file (see `collectForExport`). The file parsing lives
-  // with the rest of the import/export feature in
-  // content/importexport/import-content.js (global `WatcharrImportExport`);
-  // the parsed rows are turned into the very same entries a service history
-  // delivers, so matching, selection and the import into Watcharr work
-  // unchanged. Files that carry TMDB IDs are matched on exactly those IDs.
+  // -- Import from a file (export -> import into Watcharr) ---------------------
+  // Instead of the open service tab, the list can be filled from an exported
+  // CSV/JSON file. Parsing lives in
+  // content/importexport/import-content.js (`WatcharrImportExport`); the parsed
+  // rows become the same entries a service history delivers, so matching,
+  // selection and import work unchanged. Rows carrying TMDB IDs are matched on
+  // exactly those IDs.
 
-  /** Parses a previously exported history file (CSV or JSON) into rows.
-   *  Throws when the file is malformed JSON / has no usable entries. */
+  /** Parses an exported history file (CSV or JSON) into rows.
+   *  Throws when the JSON is malformed / has no usable entries. */
   function parseExportFile(text) {
     return WatcharrImportExport.parse(text);
   }
@@ -1047,14 +1018,13 @@ const WatcharrHistory = (() => {
     return WatcharrImportExport.toEntry(row);
   }
 
-  /** Orders file rows newest → oldest, exactly like a service history delivers
-   *  them (our own export writes them in that same order). */
+  /** Orders file rows newest -> oldest, exactly like a service history. */
   function sortFileRowsNewestFirst(rows) {
     return WatcharrImportExport.sortNewestFirst(rows);
   }
 
   /** Page cap of a full history crawl: guards the service crawl against an
-   *  endless loop; a loaded file simply has as many pages as it has entries. */
+   *  endless loop; a loaded file has as many pages as it has entries. */
   function maxPages() {
     return source === "file"
       ? Math.ceil(fileRows.length / BATCH_SIZE) + 1
@@ -1064,8 +1034,7 @@ const WatcharrHistory = (() => {
   /**
    * Loads the history from a FILE instead of the open service tab and enters
    * file mode (`source = "file"`). From here on everything behaves as usual:
-   * the rows are matched against Watcharr, shown on the history page and the
-   * selected ones can be imported.
+   * rows are matched against Watcharr, shown and importable.
    */
   async function loadFromFile(text, name) {
     if (exportRunning)
@@ -1099,7 +1068,7 @@ const WatcharrHistory = (() => {
     return await load();
   }
 
-  /** For the history page: load next batch (inline errors instead of throw). */
+  /** For the history page: load the next batch (inline errors instead of throw). */
   async function more() {
     try {
       // While a file export crawls the history, the service page buffer in the
@@ -1183,12 +1152,6 @@ const WatcharrHistory = (() => {
     it.resolved = true;
   }
 
-  /** Returns already loaded entries (for compatibility). */
-  async function getItems(offset, limit) {
-    const slice = items.slice(offset, offset + limit);
-    return { items: slice.map(serializeItem), total };
-  }
-
   /** Override an item's match with a search result chosen by the user. */
   async function rematch(key, result) {
     const it = itemMap.get(key) || items.find((x) => x.key === key);
@@ -1217,24 +1180,22 @@ const WatcharrHistory = (() => {
 
     // ---- Series – single watched episode ----
     if (it.isTv) {
-      // Does the series already exist in Watcharr? A matched/rematched row or
-      // a series created earlier in this run already carries a watchedId.
+      // Does the series already exist in Watcharr? A matched/rematched row or a
+      // series created earlier in this run already carries a watchedId.
       let wid = watchedId;
       if (!wid) {
-        // No watchedId known – check explicitly whether the series is on the
-        // watchlist before creating it (a duplicate would be an error).
+        // No watchedId known – check explicitly, because creating a duplicate
+        // would be an error.
         try {
           const show = await c.getWatchedShow(tmdbId);
           const existing = show && show.watched && Number(show.watched.id);
           if (existing) wid = existing;
         } catch (_) {
-          // Check unavailable -> treat as new; creating a duplicate would
-          // surface as an error from Watcharr.
+          // Check unavailable -> treat as new.
         }
       }
       if (wid) {
-        // Series already exists: only mark the specific episode as FINISHED.
-        // The exact Netflix date is always passed along.
+        // Series exists: only mark the specific episode as FINISHED.
         if (it.season != null && it.episode != null) {
           try {
             await c.addWatchedEpisode(
@@ -1256,11 +1217,10 @@ const WatcharrHistory = (() => {
         return { status: "updated", episodes: 0 };
       }
       // Series does NOT exist yet (only /watched endpoints, never /import):
-      // 1. add the series as WATCHING and pass the WATCHED date of the
-      //    episode we are about to add MINUS 1 minute as its "date added" –
-      //    so the series creation always precedes the episode being finished,
-      // 2. as soon as it is WATCHING, mark exactly this episode as FINISHED,
-      //    again passing the original watched date.
+      // 1. add the series as WATCHING with the episode's watch date MINUS one
+      //    minute as its "date added", so its creation precedes the finished
+      //    episode,
+      // 2. mark exactly this episode as FINISHED with the original watch date.
       try {
         const seriesDate = subtractMinutes(watchedDate, 1);
         const created = await c.addWatched(
@@ -1315,8 +1275,8 @@ const WatcharrHistory = (() => {
       }
       return { status: "updated" };
     }
-    // New movie: create directly as FINISHED via /watched. The exact Netflix
-    // date is passed as watchedDate (-> Watcharr sets "date added" to it).
+    // New movie: create directly as FINISHED via /watched, passing the exact
+    // watch date (-> Watcharr sets "date added" to it).
     try {
       const created = await c.addWatched(
         tmdbId,
@@ -1345,12 +1305,11 @@ const WatcharrHistory = (() => {
   /**
    * Imports the selected titles into Watcharr.
    *
-   * The selected entries are always sent to Watcharr ordered by their watch
-   * date in ASCENDING order (oldest first) – INDEPENDENT of the order in
-   * which the keys arrive and of the current display order (works the same
-   * for "newest first" and "oldest first" views). That way a series that is
-   * imported in this run is created in Watcharr with its oldest (original)
-   * watch date. Entries without a usable date are sent last.
+   * Selected entries are always sent ordered by watch date ASCENDING
+   * (oldest first) – independent of the order the keys arrive in and of the
+   * current display order. So a series imported in this run is created in
+   * Watcharr with its oldest (original) watch date. Entries without a usable
+   * date are sent last.
    */
   async function importItems(keys) {
     const s = await getSettings();
@@ -1360,8 +1319,7 @@ const WatcharrHistory = (() => {
     const results = [];
 
     // Resolve the selected items and sort them oldest -> newest.
-    // Items without a usable date are sent last (order between them stays
-    // as passed in).
+    // Items without a usable date go last (their relative order is kept).
     const ordered = [];
     for (const key of keys) {
       const it = itemMap.get(key) || items.find((x) => x.key === key);
@@ -1375,16 +1333,14 @@ const WatcharrHistory = (() => {
       return da - db;
     });
 
-    // When several episodes of a series that does NOT exist in Watcharr yet
-    // are imported in one run, only the first one may create the series
-    // (POST /watched). Every further episode of the SAME series must reuse the
-    // newly created watched ID – otherwise the series would be added twice.
+    // When several episodes of a series that does NOT exist yet are imported
+    // in one run, only the first may create it (POST /watched). Every further
+    // episode of the SAME series must reuse the new watched ID.
     const createdSeries = new Map(); // tmdbId -> watchedId (created in this run)
 
     for (const it of ordered) {
-      // Episode of a series that was just created above -> mark the specific
-      // episode on the existing watched entry (addWatchedEpisode) instead of
-      // trying to add the series a second time.
+      // Episode of a series created just above -> mark the episode on the
+      // existing watched entry instead of adding the series again.
       if (
         it.isTv &&
         it.match &&
@@ -1417,7 +1373,6 @@ const WatcharrHistory = (() => {
   return {
     load,
     more,
-    getItems,
     rematch,
     importItems,
     setOldestFirst,

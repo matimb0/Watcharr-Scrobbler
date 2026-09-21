@@ -1,25 +1,17 @@
 /*
- * Netflix – "Probe" (runs in the MAIN world of the Netflix page).
+ * Netflix – probe (runs in the MAIN world of the Netflix page).
  *
- * This file is loaded by content/netflix/netflix-inject.js via an external
- * <script src="…netflix-probe.js"> tag (not inline text!) and therefore runs
- * in the page's main world, where Netflix' internal player state lives.
- *
- * Why an external file instead of inline code:
- *   Netflix' Content-Security-Policy forbids inline scripts ('unsafe-inline'
- *   is absent), so a <script> with textContent is blocked by the browser.
- *   The page CSP *does* allow the extension's own origin (Chrome appends
- *   chrome-extension://<id>/ to the page CSP automatically), so an external
- *   script from the extension passes. The file is listed in
- *   web_accessible_resources for netflix.com.
- *
- * The probe reads Netflix' player/account state and reports it back to the
- * Content Script (isolated world) via a CustomEvent on `document`.
+ * Loaded by content/netflix/netflix-inject.js as an external <script src>
+ * (not inline text – Netflix' CSP blocks inline scripts but allows the
+ * extension's own origin), so it runs where Netflix' internal player state
+ * lives. It reports that state back to the content script (isolated world) via
+ * a CustomEvent on `document`.
  */
 (function () {
   if (window.__watcharrNetflixProbeInstalled__) return;
   window.__watcharrNetflixProbeInstalled__ = true;
 
+  /** Player state of all active sessions, or [] when unavailable. */
   function readPlayback() {
     try {
       var appState =
@@ -41,7 +33,7 @@
             progress: Math.min(100, (s.currentTime / s.duration) * 100),
             isPaused: !!s.paused,
             playing: !!s.playing,
-            videoId: s.videoId
+            videoId: s.videoId,
           };
         })
         .filter(Boolean);
@@ -50,8 +42,8 @@
     }
   }
 
-  // Session info (authURL, userGuid, BUILD_IDENTIFIER) – needed for
-  // Netflix history (Viewing Activity).
+  /** Session info (authURL, userGuid, BUILD_IDENTIFIER) – needed for the
+   *  Netflix history (viewing activity). */
   function readSession() {
     try {
       var r =
@@ -64,7 +56,7 @@
       var s = {
         authUrl: userInfo.authURL || null,
         profileName: userInfo.name || null,
-        userGuid: userInfo.userGuid || null
+        userGuid: userInfo.userGuid || null,
       };
       if (serverDefs && serverDefs.BUILD_IDENTIFIER) {
         s.buildIdentifier = serverDefs.BUILD_IDENTIFIER;
@@ -78,10 +70,10 @@
   function dispatch() {
     var data = {
       sessions: readPlayback(),
-      session: readSession()
+      session: readSession(),
     };
     document.dispatchEvent(
-      new CustomEvent("watcharr:netflix:playback", { detail: data })
+      new CustomEvent("watcharr:netflix:playback", { detail: data }),
     );
   }
 

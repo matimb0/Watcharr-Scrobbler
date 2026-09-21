@@ -1,35 +1,34 @@
 /*
- * Netflix – Scrobbler Content Script.
+ * Netflix – scrobbler content script.
  *
- * Detects what's currently playing on Netflix (movie vs. series, season/episode),
- * searches for the appropriate medium via the user's Watcharr instance (TMDB ID) and
- * keeps the Watcharr watchlist up to date:
- *   – Series starts            -> Create show as "WATCHING"
- *   – Episode > Threshold      -> Mark episode as watched (FINISHED)
- *   – Movie > Threshold        -> Mark movie as "FINISHED"
+ * Detects what is playing (movie vs. series, season/episode), finds the medium
+ * through the user's Watcharr instance (TMDB ID) and keeps the Watcharr
+ * watchlist up to date:
+ *   – series start          -> create show as "WATCHING"
+ *   – episode > threshold   -> mark episode as watched (FINISHED)
+ *   – movie > threshold     -> mark movie as FINISHED
  *
- * All Watcharr API calls go through the Background Script (message router),
- * so the token never ends up in the Content Script / on the Netflix page.
+ * All Watcharr API calls go through the background script, so the token never
+ * reaches the content script / the Netflix page.
  */
 "use strict";
 
 (function () {
-  // Idempotency guard: if the Content Script is already running on this page (e.g.,
-  // injected afterwards via browser.scripting), don't start again –
-  // otherwise there would be double scrobbling and double message listeners.
+  // Idempotency guard: an already running content script (e.g. injected later
+  // via browser.scripting) must not start twice – that would double-scrobble
+  // and register duplicate message listeners.
   if (window.__watcharrContentInstalled__) return;
   window.__watcharrContentInstalled__ = true;
 
   const POLL_INTERVAL_MS = 1500;
   const DEFAULT_THRESHOLD = 90;
 
-  // Only create an item in Watcharr as "WATCHING" after this cumulative playback time
-  // – prevents briefly clicked videos from cluttering the
-  // watchlist. (5 minutes)
+  // An item is only created as "WATCHING" after this much cumulative playback
+  // – prevents briefly clicked videos from cluttering the watchlist.
   const WATCHING_AFTER_SECONDS = 300;
 
   // ---------------------------------------------------------------------------
-  // Settings (come from Background via browser.storage.local)
+  // Settings (from the background via browser.storage.local)
   // ---------------------------------------------------------------------------
   const settings = {
     loaded: false,
@@ -100,9 +99,9 @@
   }
 
   /**
-   * Netflix provides `currentTime`/`duration` depending on version in seconds OR
-   * milliseconds. Normalizes both to seconds (duration > 100000 is clearly
-   * ms – more than ~27.7 hours in seconds doesn't exist on Netflix).
+   * Netflix reports currentTime/duration in seconds OR milliseconds depending
+   * on the version. Normalizes both to seconds (duration > 100000 is clearly ms
+   * – Netflix has no title longer than ~27.7 hours in seconds).
    */
   function normalizePlaybackUnits(pb) {
     if (!pb || typeof pb.duration !== "number" || pb.duration <= 100000)
@@ -121,8 +120,9 @@
   }
 
   /**
-   * Selects the appropriate playback info:
-   *   1. Session whose videoId matches the /watch/<id> URL (avoids trailers),
+   * Selects the playback info to use:
+   *   1. the session whose videoId matches the /watch/<id> URL (avoids
+   *      trailers),
    *   2. otherwise the <video> element (only if no foreign session is active).
    */
   function pickPlayback(videoId) {
@@ -255,9 +255,8 @@
         markedEpisodes: new Set(),
         markedEpisodesWatching: new Set(),
         movieFinished: false,
-        lastProgress: -1,
-        // Cumulative playback time in seconds, measured by playback position progress
-        // (lastCurrentTime for the delta between ticks).
+        // Cumulative playback time in seconds, measured by playback position
+        // progress (lastCurrentTime tracks the delta between ticks).
         watchedSeconds: 0,
         lastCurrentTime: null,
       };
@@ -448,18 +447,13 @@
   }
 
   // ---------------------------------------------------------------------------
-  // History synchronization (Netflix History -> Watcharr)
+  // History synchronization (Netflix history -> Watcharr)
   // ---------------------------------------------------------------------------
-  function normTitle(s) {
-    return (s || "").toLowerCase().replace(/\s+/g, " ").trim();
-  }
-
   // Gentle pacing for the history crawl: ONE delay before every history page
-  // (a page = HISTORY_PAGE_SIZE = 20 entries). That keeps e.g. the "oldest
-  // first" full load from crawling through hundreds of pages at full speed,
-  // but does NOT slow down the incremental (infinite scroll) mode – pages
-  // there are triggered by scrolling and are already human-paced. The
-  // metadata lookups WITHIN a page run without an extra delay.
+  // (a page = HISTORY_PAGE_SIZE = 20 entries). Keeps e.g. the "oldest first"
+  // full load from crawling hundreds of pages at full speed without slowing the
+  // incremental scroll mode (already human-paced). Lookups WITHIN a page run
+  // without an extra delay.
   const HISTORY_PAGE_GAP_MS = 500;
   let lastHistoryPageAt = 0;
   async function historyThrottle() {
@@ -540,21 +534,6 @@
     throw lastErr || new Error("History page could not be loaded");
   }
 
-  async function fetchViewingActivity(session) {
-    const pageSize = 50;
-    // Up to 500 pages (= 25000 entries) as pure safety limit – normally
-    // stops much earlier once an empty page comes back. The old
-    // limit of 25 pages silently omitted everything older than ~1250 entries.
-    const maxPages = 500;
-    const all = [];
-    for (let page = 0; page < maxPages; page++) {
-      const items = await fetchHistoryPage(session, page, pageSize);
-      all.push(...items);
-      if (!items.length) break;
-    }
-    return all;
-  }
-
   /** Raw metadata (single metadata endpoint) with cache per Netflix ID. */
   const rawMetadataCache = new Map();
   async function fetchRawMetadata(id) {
@@ -578,10 +557,9 @@
   }
 
   /**
-   * Netflix provides `date` in viewing activity as Unix milliseconds.
-   * Previously it was `new Date(it.date * 1000)` – this incorrectly multiplied the value
-   * tenfold and produced absurd years (e.g., 58635), causing Watcharr to reject
-   * `watchedDate` with HTTP 400. Second values are also accepted as fallback.
+   * Netflix viewing activity reports `date` in Unix milliseconds. (A previous
+   * version multiplied by 1000 unconditionally, producing absurd years and
+   * HTTP 400 from Watcharr.) Values in seconds are accepted as fallback.
    */
   function netflixDate(ts) {
     const n = Number(ts);
@@ -650,28 +628,6 @@
     return enriched.filter((e) => e.title);
   }
 
-  /** Returns enriched history entries for the history page. */
-  async function fetchHistoryForPage() {
-    const session = await getNetflixSession();
-    if (!session || !session.userGuid) {
-      return {
-        status: "error",
-        error:
-          "Netflix session could not be determined – please log in to Netflix.",
-      };
-    }
-    try {
-      const rawItems = await fetchViewingActivity(session);
-      const entries = await enrichHistoryItems(rawItems);
-      return { status: "ok", entries };
-    } catch (err) {
-      return {
-        status: "error",
-        error: "History could not be loaded: " + err.message,
-      };
-    }
-  }
-
   // Incremental loading: always fetch only 20 entries per Netflix call.
   const HISTORY_PAGE_SIZE = 20;
 
@@ -712,11 +668,11 @@
       const item = ensureItem(videoId);
       const pb = normalizePlaybackUnits(pickPlayback(videoId));
 
-      // 0) Capture cumulative playback time: The counter only runs when the
-      //    playback position (currentTime) advances – i.e., is actively playing.
-      //    This is more robust than pause/playing flags, which Netflix doesn't
-      //    reliably provide in every session state version. Runs in parallel with
-      //    metadata/TMDB resolution.
+      // 0) Capture cumulative playback time: the counter only runs while the
+      //    playback position advances (i.e. while actively playing). More robust
+      //    than pause/playing flags, which Netflix does not report reliably in
+      //    every session state version. Runs in parallel with metadata/TMDB
+      //    resolution.
       if (pb && pb.currentTime != null && isFinite(pb.currentTime)) {
         if (
           item.lastCurrentTime != null &&
@@ -748,12 +704,11 @@
       }
       if (!item.tmdb) return;
 
-      // 3) Ensure in Watcharr watchlist – only after the video has been
-      //    watched for longer than WATCHING_AFTER_SECONDS. Series and movies
-      //    are handled separately:
-      //      – Series: the status of the SPECIFIC episode is set, the series
-      //        itself remains untouched.
-      //      – Movie:  set status to WATCHING (create if missing).
+      // 3) Ensure in Watcharr – only after WATCHING_AFTER_SECONDS of playback.
+      //    Series and movies are handled differently:
+      //      – series: the status of the SPECIFIC episode is set, the series
+      //        itself stays untouched,
+      //      – movie:  status WATCHING (created if missing).
       if (item.watchedSeconds > WATCHING_AFTER_SECONDS) {
         const isTv = item.tmdb && item.tmdb.contentType === "tv";
         if (!item.watchedId) {
@@ -802,7 +757,6 @@
         // If season/episode is unknown (e.g. Netflix collections), just leave
         // the status as "WATCHING" – the show has already been created.
       }
-      item.lastProgress = pb.progress;
     } finally {
       ticking = false;
     }
@@ -811,26 +765,17 @@
   setInterval(tick, POLL_INTERVAL_MS);
 
   // ---------------------------------------------------------------------------
-  // Popup request: report the current element
+  // Popup request: report the currently playing item
   // ---------------------------------------------------------------------------
   browser.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (msg && msg.type === "watcharr:getCurrentItem") {
       sendResponse(currentSummary());
       return false;
     }
-    // Ping: checks if the Content Script is reachable in the tab.
+    // Ping: checks if the content script is reachable in the tab.
     if (msg && msg.type === "watcharr:ping") {
       sendResponse({ status: "ok" });
       return false;
-    }
-    // For the history page: provide raw history entries.
-    if (msg && msg.type === "watcharr:fetchHistory") {
-      fetchHistoryForPage()
-        .then(sendResponse)
-        .catch((err) => {
-          sendResponse({ status: "error", error: err.message || String(err) });
-        });
-      return true; // asynchronous response
     }
     // For the history page: fetch ONE page (20 entries) incrementally.
     if (msg && msg.type === "watcharr:fetchHistoryPage") {

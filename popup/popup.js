@@ -59,11 +59,9 @@ async function applyLanguage(lang) {
 /**
  * Which service is in front, and what is it playing?
  *
- * Primary source: the background's central tab watcher. It knows the open
- * service tabs, makes sure the content script runs in the right one (a service
- * tab that was open before the extension was loaded has none) and picks the
- * focused tab – so a newly opened service is scrobbled and shown right away.
- * Fallback: a direct look at the active tab (background unreachable).
+ * Primary source: the background's central tab watcher – it knows the open
+ * service tabs, makes sure the content script runs in the right one and picks
+ * the focused tab. Fallback: a direct look at the active tab.
  *
  * The service of the popup's OWN window is passed along, because "last focused
  * window" is ambiguous as soon as several browser windows are open.
@@ -271,7 +269,7 @@ setInterval(refresh, 2000);
 
 // The background's tab watcher pushes every change ("a service was opened /
 // closed / navigated / came to the front") – react immediately instead of
-// waiting for the next poll, which now only refreshes the playback progress.
+// waiting for the next poll, which then only refreshes the progress.
 browser.runtime.onMessage.addListener((msg) => {
   if (msg && msg.type === "watcharr:serviceTabs:changed") refresh();
 });

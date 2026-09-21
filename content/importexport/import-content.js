@@ -1,33 +1,27 @@
 /*
- * Import (file → Watcharr) – parsing of an exported history file.
+ * Import (file -> Watcharr) – parsing of an exported history file.
  *
- * Side of the import/export feature that turns a previously exported CSV or
- * JSON file into the rows/entries the history page works with. The files live
- * together with the rest of the feature in content/importexport/ – one file
- * per direction, exactly like every streaming service keeps its logic in
- * content/<service>/<service>-content.js.
+ * Turns a previously exported CSV or JSON file into the rows/entries the
+ * history page works with. The import/export feature lives in
+ * content/importexport/, one file per direction.
  *
- * Uses no page and no `browser.*` API: this is pure data processing, so it is
- * loaded where it is needed as a classic script (background, see
- * background/history.js → `WatcharrImportExport`) and exposes the global
- * `WatcharrImportExport`.
+ * Pure data processing (no DOM, no `browser.*`), so it is loaded as a classic
+ * script where needed (background, see background/history.js) and exposes the
+ * global `WatcharrImportExport`.
  *
  * The accepted field spellings are deliberately generous, so the import also
- * works for files written by other tools (not only our own export).
+ * works for files written by other tools, not only our own export.
  */
 "use strict";
 
 (function () {
-  /**
-   * Normalizes a watched date coming from a file to an ISO-8601 string.
-   * Never assume a `Date` instance survives the message channel: depending on
-   * the browser (Firefox vs Chrome) it may already be a string or a number –
-   * so we never call `.toISOString()` on the raw value.
-   */
+  /** Normalizes a watched date from a file to an ISO-8601 string. The value
+   *  may be a Date, an ISO-8601 string or numeric ms – never call
+   *  `.toISOString()` on it directly. */
   function toIsoDateString(v) {
     if (v == null) return null;
     if (v instanceof Date) return isNaN(v.getTime()) ? null : v.toISOString();
-    const d = new Date(v); // ISO-8601 string or numeric ms
+    const d = new Date(v);
     return isNaN(d.getTime()) ? null : d.toISOString();
   }
 
@@ -193,9 +187,8 @@
   }
 
   /**
-   * Parses CSV text (RFC 4180: quoted fields, doubled quotes inside quotes,
-   * CRLF or LF line breaks, optional UTF-8 BOM) into an array of row objects
-   * keyed by the header row.
+   * Parses CSV text (RFC 4180: quoted fields, doubled quotes, CRLF or LF,
+   * optional UTF-8 BOM) into row objects keyed by the header row.
    */
   function parseCsvRows(text) {
     const s = String(text).replace(/^\uFEFF/, "");
@@ -317,10 +310,10 @@
   }
 
   /**
-   * Orders file rows newest → oldest, exactly like a service history delivers
-   * them (our own export writes them in that same order). Rows without a date
-   * end up last. This makes the display order and the "oldest first" mode
-   * behave identically no matter in which order the file was written.
+   * Orders file rows newest -> oldest, exactly like a service history delivers
+   * them (our own export writes them in that order). Rows without a date end up
+   * last, so display order and "oldest first" mode behave identically no
+   * matter in which order the file was written.
    */
   function sortNewestFirst(rows) {
     const time = (r) => (r.watchedAt ? new Date(r.watchedAt).getTime() : NaN);
@@ -334,15 +327,5 @@
     });
   }
 
-  const api = { parse, toEntry, sortNewestFirst, normalizeRow: normalizeFileRow };
-
-  // Expose on whatever global object this file is loaded into (extension page
-  // window, Firefox event page, Chrome service worker).
-  const root =
-    typeof globalThis !== "undefined"
-      ? globalThis
-      : typeof window !== "undefined"
-        ? window
-        : self;
-  root.WatcharrImportExport = api;
+  globalThis.WatcharrImportExport = api;
 })();

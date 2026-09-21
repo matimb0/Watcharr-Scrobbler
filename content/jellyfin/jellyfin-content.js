@@ -1,54 +1,50 @@
 /*
- * Jellyfin – Scrobbler Content Script.
+ * Jellyfin – scrobbler content script.
  *
- * Detects what's currently playing in the Jellyfin web client (movie vs.
- * series, season/episode), resolves the TMDB ID and keeps the Watcharr
- * watchlist up to date:
- *   – Series starts            -> Create show as "WATCHING"
- *   – Episode > Threshold      -> Mark episode as watched (FINISHED)
- *   – Movie > Threshold        -> Mark movie as "FINISHED"
+ * Detects what is playing in the Jellyfin web client (movie vs. series,
+ * season/episode), resolves the TMDB ID and keeps the Watcharr watchlist up to
+ * date:
+ *   – series start          -> create show as "WATCHING"
+ *   – episode > threshold   -> mark episode as watched (FINISHED)
+ *   – movie > threshold     -> mark movie as FINISHED
  *
- * Jellyfin is SELF-HOSTED and its web client is served from the SAME origin
- * as its API, so – unlike Netflix/Prime Video – everything can be read with
- * plain same-origin fetches against the server's own API:
+ * Jellyfin is self-hosted and its web client is served from the same origin as
+ * its API, so – unlike Netflix/Prime Video – everything uses plain same-origin
+ * fetches:
  *   – the playing item comes from `GET /Sessions` (NowPlayingItem),
  *   – the playback position comes from the page's <video> element,
- *   – the login (server, access token, user id) is taken from the Jellyfin
- *     web client's own localStorage entry ("jellyfin_credentials") – the user
- *     does not have to log in a second time in the extension.
+ *   – the login (server, access token, user id) is read from the web client's
+ *     own localStorage entry ("jellyfin_credentials"), so the user does not
+ *     have to log in again.
  *
- * Because the server URL is user-configured, the manifest cannot list a fixed
- * match pattern: the Background registers this Content Script dynamically
- * (browser.scripting.registerContentScripts) for the configured server.
+ * The server URL is user-configured, so the manifest cannot list a fixed match
+ * pattern: the background registers this script dynamically for the configured
+ * server (browser.scripting.registerContentScripts).
  *
- * The item comes from the web client's own session; playback on other devices
- * (TV app, phone, …) is intentionally NOT scrobbled here.
+ * Only playback of this web client is scrobbled – not playback on other devices
+ * (TV app, phone, …), which this script cannot observe.
  *
- * All Watcharr API calls go through the Background Script (message router),
- * so the Watcharr token never ends up in the Content Script / on the Jellyfin
- * page.
+ * All Watcharr API calls go through the background script, so the Watcharr
+ * token never reaches the content script / the Jellyfin page.
  */
 "use strict";
 
 (function () {
-  // Idempotency guard: if the Content Script is already running on this page
-  // (e.g., injected afterwards via browser.scripting), don't start again.
+  // Idempotency guard: an already running content script (e.g. injected later
+  // via browser.scripting) must not start twice.
   if (window.__watcharrJellyfinContentInstalled__) return;
   window.__watcharrJellyfinContentInstalled__ = true;
 
   const POLL_INTERVAL_MS = 1500;
-  // The server only refreshes a session's position every few seconds, so the
+  // The server refreshes a session's position only every few seconds, so the
   // (cheap, same-origin) /Sessions call runs less often than the DOM poll.
   const SESSION_POLL_INTERVAL_MS = 2000;
   const DEFAULT_THRESHOLD = 90;
-  // Only create an item in Watcharr as "WATCHING" after this cumulative
-  // playback time – prevents briefly clicked videos (e.g. trailers) from
-  // cluttering the watchlist. (5 minutes)
+  // An item is only created as "WATCHING" after this much cumulative playback
+  // – prevents briefly clicked videos from cluttering the watchlist.
   const WATCHING_AFTER_SECONDS = 300;
-  // Page size used when the history page asks for incremental pages.
-  const HISTORY_PAGE_SIZE = 20;
-  // Jellyfin reports durations/positions in .NET ticks (100 ns).
-  const TICKS_PER_SECOND = 10000000;
+  const HISTORY_PAGE_SIZE = 20; // page size for the history page
+  const TICKS_PER_SECOND = 10000000; // Jellyfin durations are .NET ticks (100 ns)
   // localStorage key the Jellyfin web client uses for its servers + logins.
   const CREDENTIALS_KEY = "jellyfin_credentials";
 
@@ -278,7 +274,9 @@
           isWebClientSession(s),
       );
       // A playing session wins over a merely paused one.
-      const playing = mine.filter((s) => !(s.PlayState && s.PlayState.IsPaused));
+      const playing = mine.filter(
+        (s) => !(s.PlayState && s.PlayState.IsPaused),
+      );
       session = playing[0] || mine[0] || null;
     }
     nowPlayingState.session = session;
@@ -433,7 +431,8 @@
     const fromDom = readPlayback();
     if (!fromDom) return fromApi;
     if (!fromApi) return fromDom;
-    const ratio = fromApi.duration > 0 ? fromDom.duration / fromApi.duration : 1;
+    const ratio =
+      fromApi.duration > 0 ? fromDom.duration / fromApi.duration : 1;
     return ratio > 0.9 && ratio < 1.1 ? fromDom : fromApi;
   }
 
@@ -472,7 +471,6 @@
         markedEpisodes: new Set(),
         markedEpisodesWatching: new Set(),
         movieFinished: false,
-        lastProgress: -1,
         watchedSeconds: 0,
         lastCurrentTime: null,
       };
@@ -735,7 +733,7 @@
       const pb = resolvePlayback(session);
 
       // 0) Capture cumulative playback time: the counter only runs while the
-      //    playback position is advancing – i.e., while actively playing.
+      //    playback position advances (i.e. while actively playing).
       if (pb && pb.currentTime != null && isFinite(pb.currentTime)) {
         if (
           item.lastCurrentTime != null &&
@@ -759,8 +757,7 @@
       }
       if (!item.tmdb) return;
 
-      // 2) Ensure in Watcharr watchlist – only after the video has been
-      //    watched for longer than WATCHING_AFTER_SECONDS.
+      // 2) Ensure in Watcharr – only after WATCHING_AFTER_SECONDS of playback.
       if (item.watchedSeconds > WATCHING_AFTER_SECONDS) {
         const isTv = item.tmdb.contentType === "tv";
         if (!item.watchedId) {
@@ -799,7 +796,6 @@
           await markEpisodeWatched(item, sn, en);
         }
       }
-      item.lastProgress = pb.progress;
     } finally {
       ticking = false;
     }
@@ -914,7 +910,7 @@
       sendResponse(currentSummary());
       return false;
     }
-    // Ping: checks if the Content Script is reachable in the tab.
+    // Ping: checks if the content script is reachable in the tab.
     if (msg && msg.type === "watcharr:ping") {
       sendResponse({ status: "ok" });
       return false;

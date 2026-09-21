@@ -9,18 +9,15 @@
     es: "Español",
   };
 
+  /** Maps "de-DE"/"EN_us"/"fr" to a supported base locale, else "en". */
   function normalizeLocale(locale) {
     if (!locale) return FALLBACK_LOCALE;
-    // Strip region/case variants: "de-DE", "EN_us", "fr" -> "de"/"en"/"fr"
     const base = String(locale).trim().split(/[-_]/)[0].toLowerCase();
     return SUPPORTED_LOCALES.includes(base) ? base : FALLBACK_LOCALE;
   }
 
-  /**
-   * The browser's UI language as a supported locale.
-   * Used as the default while the user has not chosen a language explicitly.
-   * Prefers the extension UI language; falls back to navigator.languages.
-   */
+  /** The browser UI language as a supported locale (default when the user has
+   *  not chosen a language explicitly). */
   function detectBrowserLocale() {
     let raw = "";
     try {
@@ -88,13 +85,9 @@
     return normalizeLocale(locale || readLocale());
   }
 
-  function setLocale(locale) {
-    return writeLocale(resolveLocale(locale));
-  }
-
-  // Async variant that honours the canonical source of truth: the `settings`
-  // object (with `settings.language`) managed by the background script. Falls
-  // back to the synchronous localStorage read when storage is unavailable.
+  /** Async variant that honours the canonical source of truth: the `settings`
+   *  object (with `settings.language`) managed by the background script. Falls
+   *  back to the synchronous localStorage read when storage is unavailable. */
   async function fetchLocale() {
     try {
       if (
@@ -116,16 +109,11 @@
   }
 
   window.watcharrI18nLocale = {
-    STORAGE_KEY,
-    FALLBACK_LOCALE,
     SUPPORTED_LOCALES,
     LANGUAGE_NAMES,
-    normalizeLocale,
-    detectBrowserLocale,
     readLocale,
     writeLocale,
     resolveLocale,
-    setLocale,
     fetchLocale,
   };
 

@@ -48,7 +48,7 @@ func main() {
 		var ar WatchedAddRequest
 		err := json.Unmarshal([]byte(b.body), &ar)
 
-		// Binding wie Gin: unmarshal + Validierung (oneof + max)
+		// Binding like Gin: unmarshal + validation (oneof + max).
 		bindErr := err
 		if err == nil {
 			if !validContentTypes[ar.ContentType] {

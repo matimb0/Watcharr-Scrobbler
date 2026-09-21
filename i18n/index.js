@@ -51,8 +51,8 @@
   }
 
   // Caches a fully merged translation table: for non-English locales the
-  // selected locale is layered over English, so a missing key falls back to
-  // its English value instead of leaking the raw key to the user.
+  // selected locale is layered over English, so a missing key falls back to its
+  // English value instead of leaking the raw key to the user.
   async function loadTranslations(locale) {
     const safeLocale = resolveLocale(locale);
     if (cache[safeLocale]) return cache[safeLocale];
@@ -98,10 +98,10 @@
 
   // -- Trusted inline markup ---------------------------------------------------
   // `data-i18n-html` values are authored by us in i18n/translations/*.json and
-  // may contain a small set of inline formatting tags (e.g. <em>). We never
-  // assign these strings to innerHTML; instead they are parsed with DOMParser
-  // (which never executes scripts) and only allow-listed tags are rebuilt as
-  // DOM nodes, with every attribute dropped.
+  // may contain a small set of inline tags (e.g. <em>). They are never assigned
+  // to innerHTML; instead they are parsed with DOMParser (which never executes
+  // scripts) and rebuilt as DOM nodes, allow-listing the tags and dropping all
+  // attributes.
   const TRUSTED_INLINE_TAGS = new Set([
     "EM",
     "STRONG",
@@ -113,8 +113,8 @@
   ]);
 
   // Recursively copies `sourceNodes` (parsed by DOMParser) into `target` using
-  // nodes of the live document. Unknown tags are dropped but their text
-  // content is kept, so unexpected markup degrades to plain text.
+  // nodes of the live document. Unknown tags are dropped but their text content
+  // is kept, so unexpected markup degrades to plain text.
   function appendTrustedNodes(target, sourceNodes) {
     for (const node of sourceNodes) {
       if (node.nodeType === Node.TEXT_NODE) {
@@ -188,14 +188,7 @@
     return resolvedLocale;
   }
 
-  async function init(locale) {
-    const resolvedLocale = resolveLocale(locale || readLocale());
-    await applyTranslations(resolvedLocale);
-    return resolvedLocale;
-  }
-
   window.watcharrI18n = {
-    cache,
     FALLBACK_LOCALE,
     resolveLocale,
     readLocale,
@@ -205,15 +198,13 @@
     applyTranslations,
     setTrustedMarkup,
     trustedMarkupToFragment,
-    init,
-    localeApi,
   };
 
   window.i18n = window.i18n || {};
   Object.assign(window.i18n, window.watcharrI18n);
 
-  // Backwards-compatible aliases for call sites that relied on the old
-  // helper names. `applyTranslations` takes (locale, rootNode).
+  // Aliases used by the extension pages (history / options / popup).
+  // `applyTranslations` takes (locale, rootNode).
   window.i18n.resolveLanguage = resolveLocale;
   window.i18n.loadLanguage = async (locale) =>
     resolveLocale(locale || readLocale());
