@@ -29,9 +29,12 @@ integrated as services.
 
 ## Installation
 
-> **Note regarding the `<all_urls>` permission:** Since your Watcharr instance can use any
-> self-hosted URL, the extension requires a very broad
-> host permission. This is intentional.
+> **Note regarding permissions:** The manifest only requests access to the
+> fixed service hosts (Netflix, Prime Video incl. its API hosts, plex.tv).
+> What is not known in advance – your self-hosted Watcharr instance and your
+> Jellyfin server – is requested at runtime: when you save the Jellyfin or
+> Watcharr URL in the settings, or with the first click on “Reload” on the
+> history page. The prompt then names the concrete hosts, not “all sites”.
 
 **Firefox**
 
@@ -99,13 +102,13 @@ service tab.
 the current service (Netflix, Amazon Prime Video or Jellyfin) into a file – nothing is
 imported into Watcharr. Choose **CSV** or **JSON**:
 
-| Column | Meaning |
-| --- | --- |
-| `service` / `serviceId` | Netflix, Amazon Prime Video or Jellyfin |
-| `title`, `type`, `year` | Title as reported by the service (`type` = `movie` \| `tv`) |
-| `season`, `episode` | Only for series (empty for movies) |
-| `watchedAt` | Watch date/time (ISO-8601, UTC) |
-| `tmdbId`, `tmdbType`, `tmdbTitle`, `tmdbYear` | Added optionally (see below) |
+| Column                                        | Meaning                                                     |
+| --------------------------------------------- | ----------------------------------------------------------- |
+| `service` / `serviceId`                       | Netflix, Amazon Prime Video or Jellyfin                     |
+| `title`, `type`, `year`                       | Title as reported by the service (`type` = `movie` \| `tv`) |
+| `season`, `episode`                           | Only for series (empty for movies)                          |
+| `watchedAt`                                   | Watch date/time (ISO-8601, UTC)                             |
+| `tmdbId`, `tmdbType`, `tmdbTitle`, `tmdbYear` | Added optionally (see below)                                |
 
 With **“Add TMDB data via Watcharr”** (enabled by default) every entry is
 additionally matched against TMDB **through your Watcharr instance** – the

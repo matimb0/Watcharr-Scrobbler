@@ -12,11 +12,17 @@
       }
     }
   },
-  "permissions": ["storage", "scripting"],
-  "host_permissions": ["<all_urls>"],
+  "permissions": ["storage", "scripting", "tabs"],
+  "host_permissions": [
+    "*://*.netflix.com/*",
+    "*://*.primevideo.com/*",
+    "*://*.plex.tv/*"
+  ],
+  "optional_host_permissions": ["*://*/*"],
   "background": {
     "scripts": [
       "background/services.js",
+      "background/service-tabs.js",
       "content/importexport/import-content.js",
       "content/importexport/export-content.js",
       "background/watcharr-client.js",

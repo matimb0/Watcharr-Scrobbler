@@ -85,9 +85,10 @@ body {
   text-overflow: ellipsis;
 }
 
-/* Provider button in the header (next to the logo/title): shows which
-   service's history is displayed. When both services have an open tab it
-   becomes a toggle to switch between them. */
+/* Provider switch in the header (next to the logo/title): shows which
+   service's history is displayed, followed by a switch symbol. Clicking it
+   switches to the next open service – with three or more open services it
+   cycles through all of them (the tooltip names the target). */
 .service-btn {
   margin-left: 6px;
   padding: 6px 14px;
@@ -106,11 +107,13 @@ body {
   flex: none;
 }
 
+/* The switch symbol – hidden while there is only one open service (nothing to
+   switch to). It is a pseudo-element, so the button's text stays exactly the
+   service name; and it only EXISTS as content while switching is possible, so
+   screen readers never announce an invisible symbol. */
 .service-btn::after {
-  content: "⇄";
+  content: "";
   font-size: 13px;
-  opacity: 0;
-  transition: opacity 0.15s ease;
 }
 
 .service-btn.toggleable {
@@ -124,7 +127,8 @@ body {
 }
 
 .service-btn.toggleable::after {
-  opacity: 1;
+  content: "⇄";
+  opacity: 0.8;
 }
 
 /* Tool bar – inset groups instead of a row of loose buttons:

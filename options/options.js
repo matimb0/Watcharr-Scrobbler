@@ -353,6 +353,9 @@ async function login() {
         "success",
         await t("settings.connected", { username: resp.username }),
       );
+      // The Watcharr URL is now stored – ask for access to it while the click
+      // still counts as a user gesture (no prompt when it is already granted).
+      await requestHostAccess();
       await load();
     } else {
       showBanner("error", await loginErrorMessage(resp));
@@ -542,6 +545,36 @@ async function saveBehaviour() {
   await updateStepText(parseInt(els.threshold.value, 10));
 }
 
+/**
+ * Asks for access to the hosts that are only known from the settings: the
+ * self-hosted Jellyfin server and the user's Watcharr instance. Both are
+ * declared nowhere in the manifest (their URLs are typed in here), so the
+ * permission has to be requested at runtime – and a runtime request needs a
+ * user gesture, which the click on "Save"/leaving the field provides.
+ *
+ * If nothing is missing, no prompt is shown at all.
+ */
+async function requestHostAccess() {
+  if (!window.WatcharrServices || !browser.permissions) return;
+  if (!browser.permissions.request || !browser.permissions.contains) return;
+  let settings = null;
+  try {
+    const state = await browser.runtime.sendMessage({
+      type: "watcharr:getState",
+    });
+    if (state && state.ok) settings = state.settings;
+  } catch (_) {
+    return; // background unreachable – nothing to request for now
+  }
+  const origins = WatcharrServices.permissionOrigins(settings || {});
+  try {
+    if (await browser.permissions.contains({ origins })) return;
+    await browser.permissions.request({ origins });
+  } catch (err) {
+    console.warn("[watcharr-scrobbler] permission request failed:", err);
+  }
+}
+
 /* ---------- Jellyfin server (self-hosted service) ---------- */
 
 /**
@@ -568,6 +601,9 @@ async function saveJellyfinUrl() {
     showJellyfinBanner("error", await t("settings.jellyfinInvalid"));
     return;
   }
+  // The server URL decides which host the extension has to be allowed to read -
+  // ask for it right here, while the user's click still counts as a gesture.
+  await requestHostAccess();
   showJellyfinBanner("success", await t("settings.jellyfinSaved"));
 }
 

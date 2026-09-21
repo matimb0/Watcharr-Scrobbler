@@ -105,51 +105,27 @@ async function registerJellyfinContentScript() {
   }
 }
 
-/** Injects the Jellyfin content script into tabs that are already open and
- *  don't have it yet (the dynamic registration only covers tabs loaded
- *  afterwards). */
-async function injectJellyfinIntoOpenTabs() {
-  const svc = WatcharrServices.byId("jellyfin");
-  if (
-    !svc ||
-    !svc.urlPattern ||
-    !browser.scripting ||
-    !browser.scripting.executeScript
-  ) {
-    return;
-  }
-  let tabs = [];
-  try {
-    tabs = await browser.tabs.query({ url: svc.urlPattern });
-  } catch (_) {
-    return;
-  }
-  for (const tab of tabs) {
-    if (tab.id == null) continue;
-    try {
-      // Already prepared? (the content script answers the ping)
-      await browser.tabs.sendMessage(tab.id, { type: "watcharr:ping" });
-      continue;
-    } catch (_) {
-      /* no content script in this tab -> inject below */
-    }
-    try {
-      await browser.scripting.executeScript({
-        target: { tabId: tab.id },
-        files: svc.contentScripts,
-      });
-    } catch (_) {
-      /* page not injectable – the registered content script covers it */
-    }
-  }
-}
-
 /** Applies the stored settings to the service registry and keeps the
- *  dynamically registered Jellyfin content script in sync with them. */
+ *  dynamically registered Jellyfin content script in sync with them.
+ *  Tabs that are ALREADY open are handled by the central service-tab watcher
+ *  (background/service-tabs.js): it injects the content script of every
+ *  service into every open service tab, so a Jellyfin (or Netflix/Prime) tab
+ *  that predates the configured server / the extension load needs no reload.
+ */
 async function syncJellyfin() {
   WatcharrServices.applySettings(await getSettings());
   await registerJellyfinContentScript();
-  await injectJellyfinIntoOpenTabs();
+  await WatcharrServiceTabs.refresh();
+}
+
+/** Starts the central tab watcher and brings the Jellyfin registration (and
+ *  the content scripts of already-open service tabs) up to date. Runs on every
+ *  background start – Firefox event page and Chrome service-worker wake-up. */
+function startServiceTracking() {
+  WatcharrServiceTabs.start();
+  syncJellyfin().catch((err) => {
+    console.error("[watcharr-scrobbler] Jellyfin setup failed:", err);
+  });
 }
 
 /** plex.tv OAuth flow in progress (pin awaiting authorization). */
@@ -330,6 +306,70 @@ async function handleMessage(msg, sender) {
           configured: !!(s.watcharrUrl && s.token),
         },
       };
+    }
+
+    // -- Open service tabs (central watcher) -----------------------
+    // The popup and the history page read their "which service is open?"
+    // state from here instead of polling the tabs API themselves: the watcher
+    // is event-driven (tabs.onCreated/onRemoved/onUpdated/onActivated) and
+    // therefore notices a newly opened or closed service immediately.
+    case "watcharr:serviceTabs:get":
+      return { ok: true, ...WatcharrServiceTabs.getSnapshot() };
+
+    case "watcharr:serviceTabs:refresh":
+      return { ok: true, ...(await WatcharrServiceTabs.refresh()) };
+
+    // What is playing in the focused service tab? Resolved through the
+    // watcher, which also guarantees that the content script is running in
+    // that tab (a plain tabs.sendMessage fails in tabs that were opened
+    // before the extension was loaded).
+    case "watcharr:getCurrentItem": {
+      try {
+        // Without an explicit service the FOCUSED one decides – and that has
+        // to be resolved freshly: the cached snapshot may be up to one
+        // debounce interval old (which is exactly the situation "tab just
+        // opened / just switched to" this feature is about). When no service
+        // tab is in front, the first OPEN one is used – a service tab in the
+        // background is still scrobbling, so the popup reports it instead of
+        // claiming that nothing is open.
+        const snap = msg.service ? null : await WatcharrServiceTabs.refresh();
+        const svcId = msg.service
+          ? (WatcharrServices.byId(msg.service) || {}).id
+          : snap.activeServiceId || snap.openServiceIds[0] || null;
+        const svc = svcId ? WatcharrServices.byId(svcId) : null;
+        if (!svc) return { ok: false, error: "no_service" };
+        const tabId = await WatcharrServiceTabs.findServiceTab(svc.id);
+        if (tabId == null) {
+          return {
+            ok: false,
+            error: "no_service_tab",
+            service: { id: svc.id, name: svc.name },
+          };
+        }
+        let item;
+        try {
+          item = await browser.tabs.sendMessage(tabId, {
+            type: "watcharr:getCurrentItem",
+          });
+        } catch (err) {
+          // The tab was considered ready but did not answer (the content
+          // script was unloaded, the page was replaced underneath us). Drop
+          // the cached flag, inject again and try exactly once more.
+          WatcharrServiceTabs.forgetTab(tabId);
+          const retryId = await WatcharrServiceTabs.findServiceTab(svc.id);
+          if (retryId == null) throw err;
+          item = await browser.tabs.sendMessage(retryId, {
+            type: "watcharr:getCurrentItem",
+          });
+        }
+        return {
+          ok: true,
+          service: { id: svc.id, name: svc.name },
+          item: item || null,
+        };
+      } catch (err) {
+        return toErrorResponse(err);
+      }
     }
 
     case "watcharr:saveSettings": {
@@ -544,7 +584,29 @@ async function handleMessage(msg, sender) {
         }
         return { ok: true, text: await resp.text() };
       } catch (err) {
-        return { ok: false, error: err.message || String(err) };
+        const message = err.message || String(err);
+        // A blocked request ("NetworkError") means the extension has no host
+        // permission for that host. Logging which URL failed and which origins
+        // are granted at all is the decisive information: the Prime Video API
+        // lives on primevideo.com and its atv-ps*.primevideo.com hosts.
+        console.error(
+          "[watcharr-scrobbler] Prime Video API request failed:",
+          msg.url,
+          "->",
+          message,
+        );
+        if (/NetworkError|Network Error|Failed to fetch/i.test(message)) {
+          try {
+            const granted = await browser.permissions.getAll();
+            console.error(
+              "[watcharr-scrobbler] granted origins:",
+              (granted.origins || []).join(", ") || "(none)",
+            );
+          } catch (_) {
+            /* diagnostics only */
+          }
+        }
+        return { ok: false, error: message };
       }
     }
 
@@ -564,8 +626,9 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 });
 
 // Keep the service registry (Jellyfin server) and the dynamically registered
-// Jellyfin content script in sync with the stored settings. Runs on every
-// background start (Firefox event page / Chrome service-worker wake-up).
-syncJellyfin().catch((err) => {
-  console.error("[watcharr-scrobbler] Jellyfin setup failed:", err);
-});
+// Jellyfin content script in sync with the stored settings, and start the
+// central service-tab watcher. Runs on every background start (Firefox event
+// page / Chrome service-worker wake-up) – the watcher's listeners must be
+// registered synchronously so that the very first tab event of a wake-up is
+// not missed.
+startServiceTracking();

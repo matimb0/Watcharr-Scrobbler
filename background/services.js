@@ -49,9 +49,7 @@
       name: "Amazon Prime Video",
       urlTest: /(^|\.)primevideo\.com$/i,
       urlPattern: "*://*.primevideo.com/*",
-      contentScripts: [
-        "content/primevideo/primevideo-content.js",
-      ],
+      contentScripts: ["content/primevideo/primevideo-content.js"],
       hasHistory: true,
     },
     {
@@ -65,9 +63,7 @@
       urlTest: null,
       urlPattern: null,
       serverUrl: "",
-      contentScripts: [
-        "content/jellyfin/jellyfin-content.js",
-      ],
+      contentScripts: ["content/jellyfin/jellyfin-content.js"],
       hasHistory: true,
       /** True when `url` belongs to the configured Jellyfin server (host AND
        *  base path – Jellyfin may run behind a reverse proxy sub-path). */
@@ -165,6 +161,66 @@
     return !!svc && svc.hasHistory !== false && hasTabPattern(svc);
   }
 
+  /**
+   * Hosts whose pages the extension must be able to read.
+   *
+   * These are the fixed ones – they are declared in the manifest, so they are
+   * requested at install time and normally granted right away.
+   */
+  const STATIC_HOSTS = [
+    "*://*.netflix.com/*",
+    // Prime Video is only supported through primevideo.com. The wildcard also
+    // covers its API hosts (atv-ps.primevideo.com, atv-ps-<region>.primevideo.com).
+    "*://*.primevideo.com/*",
+    "*://*.plex.tv/*", // Plex login (plex.tv OAuth)
+  ];
+
+  /** Match-pattern for the origin of a full URL, or "" when there is none. */
+  function originPattern(url) {
+    try {
+      const u = new URL(String(url || ""));
+      if (u.protocol !== "http:" && u.protocol !== "https:") return "";
+      return u.origin + "/*";
+    } catch (_) {
+      return "";
+    }
+  }
+
+  /**
+   * All origins the extension needs for the given settings, as match patterns:
+   * the fixed service hosts, the configured Jellyfin server and the Watcharr
+   * instance.
+   *
+   * Only `STATIC_HOSTS` are declared in the manifest – the other two are known
+   * at runtime only (self-hosted server, the user's own Watcharr URL). Callers
+   * therefore use this list both to check the current access and to ask for it
+   * (browser.permissions.request).
+   */
+  function permissionOrigins(settings) {
+    const origins = [...STATIC_HOSTS];
+    // Configured services. The Jellyfin pattern is derived from the settings
+    // right here instead of reading it from the descriptor: this function is
+    // also called from contexts (settings page, history page) that hold the
+    // settings but never applied them to the registry.
+    const jellyfinBase = normalizeServerUrl(settings && settings.jellyfinUrl);
+    for (const svc of list) {
+      const pattern =
+        svc.id === "jellyfin" && jellyfinBase
+          ? jellyfinBase + "/*"
+          : svc.urlPattern;
+      if (
+        typeof pattern === "string" &&
+        pattern !== "" &&
+        !origins.includes(pattern)
+      ) {
+        origins.push(pattern);
+      }
+    }
+    const watcharr = originPattern(settings && settings.watcharrUrl);
+    if (watcharr && !origins.includes(watcharr)) origins.push(watcharr);
+    return origins;
+  }
+
   const api = {
     list,
     byId,
@@ -175,11 +231,18 @@
     normalizeServerUrl,
     hasTabPattern,
     hasHistory,
+    originPattern,
+    permissionOrigins,
+    STATIC_HOSTS,
   };
 
   // Expose on whatever global object this file is loaded into (extension
   // page window, Firefox event page, Chrome service worker).
   const root =
-    typeof globalThis !== "undefined" ? globalThis : typeof window !== "undefined" ? window : self;
+    typeof globalThis !== "undefined"
+      ? globalThis
+      : typeof window !== "undefined"
+        ? window
+        : self;
   root.WatcharrServices = api;
 })();

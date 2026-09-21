@@ -121,6 +121,50 @@ const WatcharrHistory = (() => {
   }
 
   /**
+   * Tabs of one service. Two sources are combined, because they fail for
+   * different reasons: the registry's own URL matching needs the tab URL to be
+   * readable, while the tab URL pattern is matched by the browser itself and
+   * therefore also finds tabs whose URL this context cannot see.
+   */
+  async function serviceCandidates(svc) {
+    const byId = new Map();
+    try {
+      for (const t of await browser.tabs.query({})) {
+        if (
+          t &&
+          t.id != null &&
+          t.url &&
+          WatcharrServices.byUrl(t.url) === svc
+        ) {
+          byId.set(t.id, t);
+        }
+      }
+    } catch (_) {
+      /* listing not available – the pattern query below still applies */
+    }
+    try {
+      for (const t of await browser.tabs.query({ url: svc.urlPattern })) {
+        if (t && t.id != null && !byId.has(t.id)) byId.set(t.id, t);
+      }
+    } catch (_) {
+      /* pattern query not available */
+    }
+    return [...byId.values()];
+  }
+
+  /** True when the extension may inject scripts into this service's pages.
+   *  Host permissions are optional in Firefox: they can be missing even though
+   *  the manifest requests them, and injecting then fails. */
+  async function hasHostPermission(svc) {
+    if (!browser.permissions || !browser.permissions.contains) return true;
+    try {
+      return await browser.permissions.contains({ origins: [svc.urlPattern] });
+    } catch (_) {
+      return true; // cannot check – let the injection report the truth
+    }
+  }
+
+  /**
    * Finds a tab of the current service where the Content Script is running.
    * If no Content Script is reachable in any tab (e.g., because the tab was
    * already open when the extension was loaded), it is injected afterwards
@@ -141,15 +185,10 @@ const WatcharrHistory = (() => {
       );
     }
     log("ensureServiceTab: searching for open", svc.name, "tabs …");
-    const tabs = await browser.tabs.query({ url: svc.urlPattern });
-    const candidates = tabs.filter((t) => t.id != null);
+    const candidates = await serviceCandidates(svc);
     log(
-      "ensureServiceTab: tabs found:",
-      tabs.length,
-      "| with id:",
-      candidates.length,
-      "|",
-      candidates.map((t) => t.id + ":" + (t.url || "?")).join(", "),
+      "ensureServiceTab: candidates:",
+      candidates.map((t) => t.id + ":" + (t.url || "?")).join(", ") || "(none)",
     );
     if (!candidates.length) {
       logErr("ensureServiceTab: no open", svc.name, "tab found");
@@ -160,6 +199,7 @@ const WatcharrHistory = (() => {
       );
     }
 
+    // 1) A tab that already runs the Content Script wins.
     for (const tab of candidates) {
       try {
         await browser.tabs.sendMessage(tab.id, { type: "watcharr:ping" });
@@ -170,40 +210,88 @@ const WatcharrHistory = (() => {
       }
     }
 
-    // No tab with running Content Script: inject afterwards.
-    const www =
-      (svc.urlTest &&
-        candidates.find((t) =>
-          svc.urlTest.test(WatcharrServices.host(t.url || "")),
-        )) ||
-      candidates[0];
+    // 2) Otherwise inject it. A tab opened before the extension was loaded has
+    //    no Content Script yet – and the injection then needs host permission
+    //    for that page, which is why the failure has to be told apart from a
+    //    plain injection error: only the permission case is worth explaining
+    //    (and only that one is fixed by granting access).
+    const permitted = await hasHostPermission(svc);
     log(
-      "ensureServiceTab: injecting Content Script in tab",
-      www.id,
-      www.url || "",
+      "ensureServiceTab: no Content Script yet | host permission for",
+      svc.urlPattern,
+      "=",
+      permitted,
     );
-    try {
-      await browser.scripting.executeScript({
-        target: { tabId: www.id },
-        files: svc.contentScripts,
-      });
-    } catch (e) {
-      logErr("ensureServiceTab: Injection failed:", e.message);
+    if (!permitted && browser.permissions && browser.permissions.getAll) {
+      // Decisive when the injection fails: which origins are granted at all?
+      try {
+        const all = await browser.permissions.getAll();
+        log(
+          "ensureServiceTab: granted origins:",
+          (all.origins || []).join(", ") || "(none)",
+        );
+      } catch (_) {
+        /* diagnostics only */
+      }
+    }
+
+    let lastError = null;
+    let permissionError = false;
+    for (const tab of candidates) {
+      try {
+        await browser.scripting.executeScript({
+          target: { tabId: tab.id },
+          files: svc.contentScripts,
+        });
+        // Wait briefly so that injected scripts (and, for Netflix, the probe
+        // in the MAIN world) have initialised …
+        await new Promise((r) => setTimeout(r, 800));
+        // … then check that the tab really answers before handing it out.
+        try {
+          await browser.tabs.sendMessage(tab.id, { type: "watcharr:ping" });
+          log("ensureServiceTab: injected into tab", tab.id, tab.url || "?");
+          return tab.id;
+        } catch (e) {
+          lastError = e;
+          logErr(
+            "ensureServiceTab: injected but not reachable in tab",
+            tab.id,
+            tab.url || "?",
+            "->",
+            e.message,
+          );
+        }
+      } catch (e) {
+        lastError = e;
+        if (/host permission/i.test(e.message || "")) permissionError = true;
+        logErr(
+          "ensureServiceTab: injection failed in tab",
+          tab.id,
+          tab.url || "?",
+          "->",
+          e.message,
+        );
+      }
+    }
+
+    const reason = (lastError && lastError.message) || String(lastError || "");
+    if (permissionError) {
       throw userError(
-        "service_tab_prepare",
-        svc.name +
-          " tab could not be prepared. Please reload the " +
-          svc.name +
-          " page and try again. (" +
-          (e.message || String(e)) +
-          ")",
-        { service: svc.name, reason: e.message || String(e) },
+        "host_permission_missing",
+        "Missing access to " + svc.name + ". (" + reason + ")",
+        { service: svc.name, reason },
       );
     }
-    // Wait briefly so that injected scripts (and, for Netflix, the probe in
-    // the MAIN world) have initialised.
-    await new Promise((r) => setTimeout(r, 800));
-    return www.id;
+    throw userError(
+      "service_tab_prepare",
+      svc.name +
+        " tab could not be prepared. Please reload the " +
+        svc.name +
+        " page and try again. (" +
+        reason +
+        ")",
+      { service: svc.name, reason },
+    );
   }
 
   /** Fetches a single page of the service history through the Content Script. */
@@ -227,7 +315,7 @@ const WatcharrHistory = (() => {
       // is surfaced through the translated generic wrapper in the UI; the
       // generic code is only used when there is genuinely no reply.
       const reason = (resp && resp.error) || "";
-      if (reason){
+      if (reason) {
         const e = new Error(reason);
         // Content scripts may attach a stable code (e.g. Jellyfin's
         // "jellyfin_not_logged_in") that the history page translates.

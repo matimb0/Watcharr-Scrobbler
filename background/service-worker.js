@@ -14,6 +14,7 @@
 importScripts(
   "../lib/browser-polyfill.min.js",
   "services.js",
+  "service-tabs.js",
   "../content/importexport/import-content.js",
   "../content/importexport/export-content.js",
   "watcharr-client.js",

@@ -31,6 +31,30 @@ function ts(key, params) {
     : key;
 }
 
+// Diagnostic logging, TEMPORARILY ON by default while the report "a service
+// tab was opened but the header did not update" is being investigated – flip
+// the fallback below back to `false` (or restore the flag-only version) before
+// the next release. Individual sessions can turn it off with `?debug=0` in the
+// page URL or `localStorage.watcharrDebug = "0"` in the console of the history
+// page; `= "1"` forces it on. Every reconciliation then reports what it saw and
+// which path triggered it, so a header that does not update can be traced
+// instead of guessed at.
+const DEBUG = (() => {
+  try {
+    const flag = new URLSearchParams(location.search).get("debug");
+    if (flag != null) return flag !== "0";
+    const stored = localStorage.getItem("watcharrDebug");
+    if (stored != null) return stored !== "0";
+  } catch (_) {
+    /* no URL/localStorage available – use the default below */
+  }
+  return true; // TEMPORARY default while debugging
+})();
+
+function dbg(...args) {
+  if (DEBUG) console.log("[watcharr-scrobbler:history]", ...args);
+}
+
 // Stable error codes produced by the background scripts (background/history.js
 // and background/watcharr-client.js) mapped to translation keys, so extension-
 // authored error copy is localized instead of shown raw. Unknown/arbitrary
@@ -39,6 +63,9 @@ const ERROR_KEYS = {
   not_configured: "history.error.notConfigured",
   no_service_tab: "history.error.noServiceTab",
   service_tab_prepare: "history.error.serviceTabPrepare",
+  // Host permissions are optional in Firefox: the manifest only requests them,
+  // and without them a service tab cannot be read or injected into.
+  host_permission_missing: "history.error.hostPermission",
   service_not_configured: "history.error.serviceNotConfigured",
   no_service_response: "history.error.noResponse",
   auth_failed: "history.error.authFailed",
@@ -75,6 +102,12 @@ async function describeError(err, fallbackKey) {
     return t(ERROR_KEYS[err.errorCode], (err && err.errorParams) || {});
   }
   const raw = (err && (err.error || err.message)) || "";
+  // A fetch blocked by the browser surfaces as "NetworkError …". That is
+  // almost always missing host access – telling the user to try again would be
+  // useless, so the actionable hint replaces the raw browser message.
+  if (/NetworkError|Network Error|Failed to fetch/i.test(raw)) {
+    return t("history.error.networkBlocked");
+  }
   if (raw) return t("history.error.generic", { reason: raw });
   return t(fallbackKey || "history.loadingFailed");
 }
@@ -135,6 +168,9 @@ let serviceId = "netflix";
 let serviceAvailable = false;
 // Services with an open tab (the header toggle switches between them).
 let availableServices = [];
+// Settings this page was opened with (Jellyfin server, Watcharr URL). They
+// decide which host access has to be requested – see neededOrigins().
+let loadedSettings = null;
 
 const TMDB_IMG = "https://image.tmdb.org/t/p/w185";
 
@@ -765,6 +801,12 @@ function clearList(loadingText, showCancel) {
 
 async function load() {
   if (loadingInitial || exporting) return false; // a load/export is running
+  // Without host access the service tab cannot be read at all, and the remedy
+  // needs a click – so say that instead of loading into a tab error.
+  if (!fileMode && !(await hasServiceAccess())) {
+    await showNeedPermission();
+    return false;
+  }
   loadingInitial = true; // lock infinite scroll until this load finishes
   const gen = ++loadGen; // supersede any in-flight "load more" / older loads
   clearStatus();
@@ -1454,7 +1496,12 @@ els.exportModal.addEventListener("click", (e) => {
   if (e.target === els.exportModal && !exporting) closeExportDialog();
 });
 
-els.reloadBtn.addEventListener("click", load);
+els.reloadBtn.addEventListener("click", () => {
+  // Missing host access is the one load failure the user can fix with a click –
+  // granting a permission needs a user gesture, and this click is one. When
+  // everything is granted already, this resolves without any prompt.
+  requestServiceAccess().finally(load);
+});
 
 // -- Import from a file -------------------------------------------------------
 // Fills the list from a previously exported history file (CSV/JSON) instead of
@@ -1509,9 +1556,27 @@ async function applyServiceHeader() {
 }
 
 /**
- * Renders the provider button in the header: it always shows the service
- * whose history is currently displayed. When more than one service has an
- * open tab it becomes a toggle (click switches to the other provider).
+ * The service the switch button would jump to, or null when there is nothing
+ * to switch to. With two open services it is simply the other one; with three
+ * or more it walks through the open services in order and starts over at the
+ * end, so repeated clicks cycle through all of them.
+ */
+function nextService() {
+  if (availableServices.length < 2) return null;
+  const idx = availableServices.findIndex((s) => s.id === serviceId);
+  // The displayed service is not (or no longer) among the open ones – start
+  // the cycle at the beginning.
+  if (idx < 0) return availableServices[0] || null;
+  return availableServices[(idx + 1) % availableServices.length];
+}
+
+/**
+ * Renders the provider switch in the header: it shows which service's history
+ * is displayed – and nothing else. The switch symbol to its right comes from
+ * the stylesheet (`.service-btn::after`) and only appears while a second
+ * service has an open tab; the tooltip then names the service the click would
+ * lead to. Naming only the current service keeps the button narrow no matter
+ * how many services are open.
  */
 function renderServiceToggle(available) {
   availableServices = available || [];
@@ -1525,53 +1590,214 @@ function renderServiceToggle(available) {
     return;
   }
   btn.classList.remove("hidden");
-  btn.textContent = svc.name;
-  const toggleable = availableServices.length > 1;
-  btn.classList.toggle("toggleable", toggleable);
-  if (toggleable) {
-    const target = availableServices.find((s) => s.id !== serviceId);
-    btn.title = ts("history.switchProviderTitle", {
-      service: svc.name,
-      target: target ? target.name : "",
+  const target = nextService();
+  // Rebuild the label only when it really changed – the reconciliation runs a
+  // few times per second, and rewriting the DOM on every run would flicker.
+  if (btn.dataset.label !== svc.name) {
+    btn.dataset.label = svc.name;
+    btn.textContent = svc.name;
+  }
+  btn.classList.toggle("toggleable", !!target);
+  btn.title = target
+    ? ts("history.switchProviderTitle", {
+        service: svc.name,
+        target: target.name,
+      })
+    : ts("history.pageTitle", { service: svc.name });
+}
+
+/** Open services of a background watcher snapshot / message payload. */
+function servicesFromSnapshot(snap) {
+  return (snap && Array.isArray(snap.services) ? snap.services : [])
+    .filter((s) => s && s.open)
+    .map((s) => WatcharrServices.byId(s.id))
+    .filter(Boolean);
+}
+
+/** The service in front, when it is one of `available`, else the first one. */
+function pickChosen(available, activeServiceId) {
+  const preferred = activeServiceId
+    ? WatcharrServices.byId(activeServiceId)
+    : null;
+  return preferred && available.some((s) => s.id === preferred.id)
+    ? preferred
+    : available[0] || null;
+}
+
+/** Turns a watchdog payload/snapshot into the shape used by refreshProviders. */
+function detectionFromSnapshot(snap) {
+  const available = servicesFromSnapshot(snap);
+  const activeServiceId = (snap && snap.activeServiceId) || null;
+  return {
+    available,
+    activeServiceId,
+    chosen: pickChosen(available, activeServiceId),
+    revision: snap && typeof snap.revision === "number" ? snap.revision : null,
+  };
+}
+
+/**
+ * Asks the background's central service-tab watcher which services have an
+ * open tab and which one is in front. The watcher is event-driven, so a
+ * freshly opened/closed service tab is known immediately – and it is the SAME
+ * state the popup uses (no second, diverging detection).
+ * Returns null when the background cannot be reached; its answer is combined
+ * with the local detection anyway (see detectServices).
+ */
+async function serviceTabsFromBackground() {
+  try {
+    const snap = await browser.runtime.sendMessage({
+      type: "watcharr:serviceTabs:refresh",
     });
-  } else {
-    btn.title = ts("history.pageTitle", { service: svc.name });
+    if (!snap || !snap.ok || !Array.isArray(snap.services)) {
+      dbg("background: unusable answer", snap);
+      return null;
+    }
+    dbg("background:", {
+      open: snap.openServiceIds,
+      active: snap.activeServiceId,
+      revision: snap.revision,
+    });
+    return detectionFromSnapshot(snap);
+  } catch (err) {
+    // Background unreachable -> the caller combines with the local detection.
+    dbg("background: unreachable", err && err.message);
+    return null;
   }
 }
 
 /**
- * Determines which services have an open, usable tab and which one should be
- * selected: the currently focused service tab wins, otherwise the first
- * service that has an open tab.
+ * Local detection: lists ALL tabs once and matches them with the service
+ * registry's own URL logic (`WatcharrServices.byUrl`).
+ *
+ * This deliberately does NOT use `tabs.query({ url: svc.urlPattern })`: the
+ * browser's match-pattern engine and the registry's matching do not always
+ * agree – a pattern such as `*://*.netflix.com/*` can fail to match the very
+ * tab it describes, while the registry's hostname test recognizes it reliably.
+ * The Jellyfin base path cannot be expressed as a pattern at all. Listing the
+ * tabs once is also cheaper (one query instead of one per service).
+ *
+ * The per-service pattern queries remain as a fallback for the case that the
+ * full listing is not available.
  */
-async function detectServices() {
+async function detectServicesLocally() {
+  const wanted = WatcharrServices.list.filter((s) =>
+    WatcharrServices.hasHistory(s),
+  );
   const available = [];
-  for (const svc of WatcharrServices.list) {
-    // Skips services without a configured server (self-hosted Jellyfin until
-    // its URL is set in the settings).
-    if (!WatcharrServices.hasHistory(svc)) continue;
+  let allTabs = [];
+  try {
+    allTabs = (await browser.tabs.query({})) || [];
+    if (DEBUG) {
+      const readable = allTabs.filter((t) => t && t.url);
+      const hosts = readable.map((t) => {
+        try {
+          return new URL(t.url).hostname + (t.active ? "*" : "");
+        } catch (_) {
+          return "?";
+        }
+      });
+      dbg(
+        "tabs:",
+        allTabs.length + " total,",
+        allTabs.length - readable.length + " without readable url ->",
+        hosts.join(", ") || "(none)",
+      );
+    }
+  } catch (err) {
+    dbg("listing all tabs failed", err && err.message);
+  }
+
+  for (const svc of wanted) {
+    // Two independent lookups, because they fail for different reasons:
+    //  - matching the tab URLs here needs the tab URL to be READABLE (without
+    //    the "tabs" permission a browser hides it for foreign tabs),
+    //  - the pattern query is matched by the browser itself and therefore also
+    //    finds tabs whose URL this page cannot see.
+    let found = allTabs.filter(
+      (t) => t && t.url && WatcharrServices.byUrl(t.url) === svc,
+    ).length;
+    if (!found) {
+      try {
+        const tabs = await browser.tabs.query({ url: svc.urlPattern });
+        found = (tabs || []).filter((t) => t.id != null).length;
+      } catch (err) {
+        dbg("pattern query failed", svc.id, svc.urlPattern, err && err.message);
+      }
+    }
+    dbg("local detect", svc.id, "->", found, "tab(s)");
+    if (found) available.push(svc);
+  }
+
+  let activeServiceId = null;
+  for (const query of [
+    { active: true, lastFocusedWindow: true },
+    { active: true },
+  ]) {
     try {
-      const tabs = await browser.tabs.query({ url: svc.urlPattern });
-      if (tabs.some((t) => t.id != null)) available.push(svc);
+      const active = (await browser.tabs.query(query))[0];
+      const activeSvc =
+        active && active.url ? WatcharrServices.byUrl(active.url) : null;
+      if (activeSvc) {
+        activeServiceId = activeSvc.id;
+        break;
+      }
     } catch (_) {
-      /* ignore – no permission for this pattern */
+      /* try the next query variant */
     }
   }
-  let preferred = null;
-  try {
-    const active = (
-      await browser.tabs.query({ active: true, currentWindow: true })
-    )[0];
-    const activeSvc = active && WatcharrServices.byUrl(active.url);
-    if (activeSvc) preferred = activeSvc;
-  } catch (_) {
-    /* ignore */
-  }
-  const chosen =
-    preferred && available.some((s) => s.id === preferred.id)
-      ? preferred
-      : available[0] || null;
-  return { available, chosen };
+  return {
+    available,
+    activeServiceId,
+    chosen: pickChosen(available, activeServiceId),
+  };
+}
+
+/**
+ * Which services have an open, usable tab and which one should be displayed:
+ * the service in front wins, otherwise the first one with an open tab.
+ *
+ * Both sources are UNIONED, not ranked. They answer the same question from
+ * different places, and a stale answer must never hide an open service:
+ * the background snapshot is built on a debounce and can therefore describe a
+ * moment shortly before the tab appeared – and a service tab that is still
+ * loading may not even have its URL yet, so the background may legitimately
+ * still report it as closed. The direct query from here cheaply closes that
+ * gap and is what makes a freshly opened service tab show up right away.
+ */
+async function detectServices() {
+  const [fromBackground, local] = await Promise.all([
+    serviceTabsFromBackground(),
+    detectServicesLocally(),
+  ]);
+  const openIds = new Set();
+  if (fromBackground)
+    fromBackground.available.forEach((s) => openIds.add(s.id));
+  local.available.forEach((s) => openIds.add(s.id));
+  // Registry order (netflix, primevideo, jellyfin) keeps the button's cycle
+  // order stable, no matter which source found what.
+  const available = WatcharrServices.list.filter(
+    (s) => openIds.has(s.id) && WatcharrServices.hasHistory(s),
+  );
+  // For the service in front the background wins: it also sees focus changes
+  // (window switches) that this page cannot observe as reliably.
+  const activeServiceId =
+    (fromBackground && fromBackground.activeServiceId) ||
+    local.activeServiceId ||
+    null;
+  dbg("detected:", {
+    background: fromBackground
+      ? fromBackground.available.map((s) => s.id)
+      : null,
+    local: local.available.map((s) => s.id),
+    merged: available.map((s) => s.id),
+    activeServiceId,
+  });
+  return {
+    available,
+    activeServiceId,
+    chosen: pickChosen(available, activeServiceId),
+  };
 }
 
 /** No service tab is open – the history cannot be loaded. */
@@ -1581,6 +1807,80 @@ async function showNoService() {
     .map((s) => s.name)
     .join(" / ");
   const msg = await t("history.noServiceTab", { services: names });
+  setStatus("error", msg);
+  replaceFromHtml(
+    els.list,
+    '<div class="list-hint">' + escapeHtml(msg) + "</div>",
+  );
+  updateImportButton();
+}
+
+/**
+ * Host access the background needs to load a history. The list is built by the
+ * service registry (`WatcharrServices.permissionOrigins`) from
+ *
+ *  - the fixed service hosts (Netflix, Prime Video incl. its atv-ps API hosts,
+ *    plex.tv) – declared in the manifest and therefore granted at install time,
+ *  - the configured Jellyfin server, and
+ *  - the user's Watcharr instance.
+ *
+ * The last two can only be known at runtime, so they are requested when the
+ * need arises (see requestServiceAccess) instead of asking for every site up
+ * front in the manifest.
+ */
+function neededOrigins() {
+  return WatcharrServices.permissionOrigins(loadedSettings || {});
+}
+
+/** True when the extension may read (and inject into) the service pages and
+ *  reach the service API / Watcharr. Host permissions are optional in Firefox –
+ *  the manifest only *requests* them, so they can be missing even after a
+ *  successful install. */
+async function hasServiceAccess() {
+  if (!browser.permissions || !browser.permissions.contains) return true;
+  try {
+    return await browser.permissions.contains({ origins: neededOrigins() });
+  } catch (_) {
+    return true; // cannot check – let the load report the real problem
+  }
+}
+
+/** Asks for the missing host access. Must run inside a user gesture (a click),
+ *  which is why it is only called from the Reload button and the settings page.
+ *  Nothing is shown when the access is already granted. */
+async function requestServiceAccess() {
+  if (!browser.permissions || !browser.permissions.request) return false;
+  // Ask the background for the current settings first: the Jellyfin server and
+  // the Watcharr URL are part of what has to be requested, and both can have
+  // been changed in the settings since this page was opened.
+  try {
+    const state = await browser.runtime.sendMessage({
+      type: "watcharr:getState",
+    });
+    if (state && state.ok) loadedSettings = state.settings || loadedSettings;
+  } catch (_) {
+    /* keep the settings this page was opened with */
+  }
+  try {
+    const origins = neededOrigins();
+    if (await browser.permissions.contains({ origins })) return true;
+    const granted = await browser.permissions.request({ origins });
+    dbg("permission request ->", granted);
+    return !!granted;
+  } catch (err) {
+    dbg("permission request failed", err && err.message);
+    return false;
+  }
+}
+
+/** The extension is not allowed to read the service yet. Says so instead of
+ *  letting the load end in a tab error the user cannot act on. */
+async function showNeedPermission() {
+  const list = availableServices.length
+    ? availableServices
+    : WatcharrServices.list.filter((s) => WatcharrServices.hasHistory(s));
+  const names = list.map((s) => s.name).join(" / ");
+  const msg = await t("history.needPermission", { services: names });
   setStatus("error", msg);
   replaceFromHtml(
     els.list,
@@ -1606,48 +1906,78 @@ async function switchProvider(id) {
 }
 
 /**
- * Re-checks which service tabs are open and reconciles the header toggle:
- *  - no service tab open at all               -> toggle is hidden,
+ * Re-checks which service tabs are open and reconciles the header switch:
+ *  - no service tab open at all               -> switch is hidden (the list the
+ *    user is looking at is kept),
  *  - the current provider's tab is gone, but another provider is open
- *    -> switch to it (and reload, unless an "oldest first" load is running),
- *  - otherwise only the toggle state is refreshed (e.g. a second provider's
- *    tab opened/closed -> becomes/ceases to be a toggle).
+ *    -> switch to it (and reload),
+ *  - the first provider appeared while this page was already open
+ *    -> load its history (previously the "no service" hint stayed until a
+ *    manual reload),
+ *  - the service in front changed (e.g. the user clicked from the Netflix tab
+ *    to the Prime Video tab)                  -> follow it (and reload),
+ *  - otherwise only the switch state is refreshed (e.g. a second provider's
+ *    tab opened/closed -> the second name appears/disappears).
+ * Returns true when a history load was started.
  */
-async function refreshProviders() {
-  const { available, chosen } = await detectServices();
+async function refreshProviders(detection, reason) {
+  const { available, chosen, activeServiceId } =
+    detection || (await detectServices());
   availableServices = available;
-  const hadService = serviceAvailable;
 
   // File-import mode: tab events must not replace the imported list.
   if (fileMode) {
     renderServiceToggle(available);
-    return;
+    return false;
   }
 
   if (!chosen) {
-    // No service tab is open – hide the toggle (keep the current view).
+    // No service tab is open (any more). Hide the switch, but keep the current
+    // view so closing a tab does not wipe the loaded history.
+    serviceAvailable = false;
     renderServiceToggle(available);
-    return;
+    return false;
   }
 
   const currentOpen = available.some((s) => s.id === serviceId);
-  if (!serviceAvailable || !currentOpen) {
-    // First detection or the current provider's tab was closed.
+  // Only a service that REALLY is in front (a service tab the user is looking
+  // at) makes the page follow. `chosen` must not be used for this: without a
+  // service tab in front it falls back to the FIRST open service, so a
+  // deliberate switch via the header button would be undone a moment later by
+  // the next reconciliation.
+  const focusedChanged =
+    !!activeServiceId &&
+    activeServiceId !== serviceId &&
+    available.some((s) => s.id === activeServiceId);
+  dbg("reconcile (" + (reason || "unspecified") + "):", {
+    available: available.map((s) => s.id),
+    chosen: chosen ? chosen.id : null,
+    activeServiceId,
+    serviceId,
+    serviceAvailable,
+    currentOpen,
+    focusedChanged,
+  });
+  if (!serviceAvailable || !currentOpen || focusedChanged) {
+    // First detection, the current provider's tab was closed, or the service
+    // in front changed. A second provider that is merely opened in the
+    // background does NOT switch the view – the header button turns into a
+    // switch instead (see renderServiceToggle).
     serviceId = chosen.id;
     serviceAvailable = true;
     await applyServiceHeader();
     renderServiceToggle(available);
-    if (hadService && !loadingInitial) {
-      // Switch to the other provider and load its history.
-      oldestFirst = false;
-      updateOrderBtn();
-      load();
-    }
-    return;
+    if (loadingInitial) return false; // a load is running – it owns the list
+    // A different service = a completely different history.
+    oldestFirst = false;
+    updateOrderBtn();
+    load();
+    return true;
   }
 
-  // Provider unchanged – just keep the toggle in sync with the open tabs.
+  // Provider unchanged – just keep the switch in sync with the open tabs.
   renderServiceToggle(available);
+  return false;
 }
 
 let providerRefreshTimer = null;
@@ -1657,42 +1987,66 @@ function scheduleProviderRefresh() {
   if (providerRefreshTimer) clearTimeout(providerRefreshTimer);
   providerRefreshTimer = setTimeout(() => {
     providerRefreshTimer = null;
-    refreshProviders();
+    refreshProviders(undefined, "tab-event");
   }, 400);
 }
 
 /**
- * Reacts to tab events so the toggle updates immediately when a tab is
- * opened/closed/navigated:
- *   - tabs.onCreated / onRemoved -> a service tab appeared or disappeared,
- *   - tabs.onActivated           -> the active tab changed,
- *   - tabs.onUpdated (url/complete) -> a tab navigated to/away from a service.
+ * Keeps the header switch in sync with the open service tabs. Two paths, on
+ * purpose:
+ *   1. the background's central watcher broadcasts every change
+ *      (`watcharr:serviceTabs:changed`) the moment it happens – the payload
+ *      already contains the new state, so it is applied directly instead of
+ *      asking the background again (one round trip less, and no lost update
+ *      when the background restarts in between),
+ *   2. the local tab events below are the fallback for the (rare) case that
+ *      the background is restarted and the broadcast never arrives.
  */
 function bindTabEvents() {
   try {
-    browser.tabs.onCreated.addListener(scheduleProviderRefresh);
-    browser.tabs.onRemoved.addListener(scheduleProviderRefresh);
-    browser.tabs.onActivated.addListener(scheduleProviderRefresh);
+    browser.runtime.onMessage.addListener((msg) => {
+      if (!msg || msg.type !== "watcharr:serviceTabs:changed") return;
+      dbg("event: background broadcast", msg.openServiceIds);
+      // The background already debounced the event burst – reconcile now.
+      refreshProviders(detectionFromSnapshot(msg), "broadcast");
+    });
+  } catch (_) {
+    /* runtime messages not available in this context */
+  }
+  const onEvent = (name) => () => {
+    dbg("event:", name);
+    scheduleProviderRefresh();
+  };
+  try {
+    browser.tabs.onCreated.addListener(onEvent("tabs.onCreated"));
+    browser.tabs.onRemoved.addListener(onEvent("tabs.onRemoved"));
+    browser.tabs.onActivated.addListener(onEvent("tabs.onActivated"));
     browser.tabs.onUpdated.addListener((tabId, changeInfo) => {
       // React when a tab finished loading or its URL changed; plain loading
       // status updates would be too noisy.
       if (changeInfo && (changeInfo.url || changeInfo.status === "complete")) {
+        dbg("event: tabs.onUpdated", changeInfo.status || changeInfo.url);
         scheduleProviderRefresh();
       }
     });
-  } catch (_) {
-    /* tabs events not available in this context */
+    dbg("listening for tab events");
+  } catch (err) {
+    // Tab events not available in this context – only the periodic
+    // reconciliation below would be left, which is worth reporting.
+    dbg("tab events unavailable", err && err.message);
   }
 }
 
 async function initHistory() {
   // The Jellyfin server URL is part of the settings and defines the service's
-  // tab pattern – load it before any service detection runs.
+  // tab pattern – load it before any service detection runs. The same settings
+  // say which host access has to be requested (neededOrigins).
   try {
     const state = await browser.runtime.sendMessage({
       type: "watcharr:getState",
     });
     if (state && state.ok && window.WatcharrServices) {
+      loadedSettings = state.settings || null;
       WatcharrServices.applySettings(state.settings);
     }
   } catch (_) {
@@ -1708,28 +2062,65 @@ async function initHistory() {
   updateMatchModeBtn();
   updateSourceUI();
 
-  // Header provider button: with a second service available it toggles
-  // between the providers (otherwise it only shows the current one).
+  dbg("init:", {
+    jellyfinUrl:
+      (WatcharrServices.byId("jellyfin") || {}).serverUrl || "(none)",
+    services: WatcharrServices.list.map(
+      (s) => s.id + "=" + (s.urlPattern || "no pattern"),
+    ),
+  });
+
+  // Header provider switch: it shows the current service and switches to the
+  // next open one on click – with three or more open services it cycles
+  // through all of them.
   if (els.serviceBtn) {
     els.serviceBtn.addEventListener("click", () => {
-      if (availableServices.length < 2) return; // nothing to switch to
-      const next = availableServices.find((s) => s.id !== serviceId);
-      if (!next) return;
+      const next = nextService();
+      if (!next) return; // nothing to switch to
       switchProvider(next.id);
     });
   }
 
-  // Keep the provider toggle in sync with the open tabs (event-driven).
+  // Keep the provider switch in sync with the open tabs (background broadcast
+  // as the fast path, local tab events as the fallback).
   bindTabEvents();
 
-  await refreshProviders();
+  // Safety net: the background broadcasts only on CHANGE, so a state that was
+  // already current before this page opened never arrives as a broadcast.
+  // Reconcile periodically – cheap (one message, no DOM rewrite when nothing
+  // changed) and it also heals a missed broadcast.
+  setInterval(() => {
+    if (!fileMode && !loadingInitial && !exporting)
+      refreshProviders(undefined, "interval");
+  }, 3000);
+  dbg("periodic reconciliation every 3 s started");
+
+  // A hidden tab has its timers throttled by the browser, so a change that
+  // happened while the user was looking at a service tab may only be picked up
+  // late. Coming back to this page is exactly the moment the state has to be
+  // right – so re-check immediately instead of waiting for the next tick.
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden || fileMode || loadingInitial || exporting) return;
+    dbg("page visible again – re-checking");
+    refreshProviders(undefined, "visible");
+  });
+
+  // `refreshProviders` already loads the history when a service tab is open –
+  // this includes the very first detection. The extra `load()` below is only
+  // for the race where that first reconciliation could not start a load.
+  const loadStarted = await refreshProviders(undefined, "init");
   await applyServiceHeader();
 
   if (!serviceAvailable) {
     await showNoService();
     return;
   }
-  load();
+  if (!loadStarted) load();
 }
 
-initHistory();
+// A failure while setting up the page must be visible: if the initialization
+// throws, the header stays at its initial state and nothing else would explain
+// why – so report it instead of leaving an empty console.
+initHistory().catch((err) => {
+  console.error("[watcharr-scrobbler:history] initialization failed:", err);
+});

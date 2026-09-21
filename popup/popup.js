@@ -56,7 +56,79 @@ async function applyLanguage(lang) {
   document.documentElement.lang = currentLanguage;
 }
 
+/**
+ * Which service is in front, and what is it playing?
+ *
+ * Primary source: the background's central tab watcher. It knows the open
+ * service tabs, makes sure the content script runs in the right one (a service
+ * tab that was open before the extension was loaded has none) and picks the
+ * focused tab – so a newly opened service is scrobbled and shown right away.
+ * Fallback: a direct look at the active tab (background unreachable).
+ *
+ * The service of the popup's OWN window is passed along, because "last focused
+ * window" is ambiguous as soon as several browser windows are open.
+ */
+async function currentServiceAndItem() {
+  let tab = null;
+  let localSvc = null;
+  try {
+    tab = (await browser.tabs.query({ active: true, currentWindow: true }))[0];
+    if (tab && window.WatcharrServices)
+      localSvc = WatcharrServices.byUrl(tab.url);
+  } catch (_) {
+    /* tabs API unavailable – the background path below still works */
+  }
+
+  try {
+    const resp = await browser.runtime.sendMessage({
+      type: "watcharr:getCurrentItem",
+      service: localSvc ? localSvc.id : "",
+    });
+    if (resp && resp.ok) {
+      return { service: resp.service || null, item: resp.item || null };
+    }
+    // The background answered, but without an item: keep the service it
+    // reported so the UI can still name it.
+    if (resp && resp.service) return { service: resp.service, item: null };
+  } catch (_) {
+    /* background unreachable – fall through to the local path */
+  }
+
+  if (!localSvc || !tab) return { service: null, item: null };
+  let item = null;
+  try {
+    item = await browser.tabs.sendMessage(tab.id, {
+      type: "watcharr:getCurrentItem",
+    });
+  } catch (_) {
+    item = null;
+  }
+  return { service: { id: localSvc.id, name: localSvc.name }, item };
+}
+
+// A burst of tab events (a new service tab fires several) would otherwise
+// start overlapping popup refreshes that fight over the DOM.
+let refreshing = false;
+let refreshQueued = false;
+
 async function refresh() {
+  if (refreshing) {
+    refreshQueued = true;
+    return;
+  }
+  refreshing = true;
+  try {
+    await renderPopup();
+  } finally {
+    refreshing = false;
+    if (refreshQueued) {
+      refreshQueued = false;
+      refresh();
+    }
+  }
+}
+
+async function renderPopup() {
   const stateResp = await browser.runtime.sendMessage({
     type: "watcharr:getState",
   });
@@ -93,29 +165,14 @@ async function refresh() {
     return;
   }
 
-  const tab = (
-    await browser.tabs.query({ active: true, currentWindow: true })
-  )[0];
-  // Which supported streaming service (if any) is open in the active tab?
-  const svc =
-    tab && window.WatcharrServices ? WatcharrServices.byUrl(tab.url) : null;
-  let item = null;
-  if (svc) {
-    try {
-      item = await browser.tabs.sendMessage(tab.id, {
-        type: "watcharr:getCurrentItem",
-      });
-    } catch (_) {
-      item = null;
-    }
-  }
+  const { service, item } = await currentServiceAndItem();
 
   els.notConfigured.classList.add("hidden");
 
   if (item && item.videoId) {
     els.nowPlaying.classList.remove("hidden");
     els.nowPlayingLabel.textContent = await t("popup.nowPlaying", {
-      service: svc ? svc.name : "",
+      service: service ? service.name : "",
     });
     els.noService.classList.add("hidden");
 
@@ -211,3 +268,10 @@ els.historyBtn.addEventListener("click", () => {
 
 refresh();
 setInterval(refresh, 2000);
+
+// The background's tab watcher pushes every change ("a service was opened /
+// closed / navigated / came to the front") – react immediately instead of
+// waiting for the next poll, which now only refreshes the playback progress.
+browser.runtime.onMessage.addListener((msg) => {
+  if (msg && msg.type === "watcharr:serviceTabs:changed") refresh();
+});
