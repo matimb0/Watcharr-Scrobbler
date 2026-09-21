@@ -170,7 +170,7 @@
     "needPermission": "Watcharr Scrobbler darf {service} noch nicht lesen. Klicke auf „Neu laden“, um den Zugriff zu erlauben.",
     "permissionBlocked": "Der Browser hat den Zugriff auf {service} nicht erlaubt. Erlaube ihn in about:addons → Watcharr Scrobbler → Berechtigungen und lade diese Seite danach neu.",
     "noteLead": "Bitte beachten:",
-    "primeVideoNote": "Melde dich bei Prime Video UND bei Amazon mit dem richtigen Account an. Der Verlauf wird über beide Anmeldungen abgerufen – sind dort verschiedene Accounts angemeldet, ist der Verlauf unvollständig oder gehört zu einem anderen Konto.",
+    "primeVideoNote": "Melde dich bei Prime Video UND bei Amazon mit dem gleichen Account an. Der Verlauf wird über beide Anmeldungen abgerufen – sind dort verschiedene Accounts angemeldet, ist der Verlauf unvollständig oder gehört zu einem anderen Konto.",
     "searchFailed": "Suche fehlgeschlagen: {error}",
     "changeMatch": "Zuordnung ändern",
     "matchUpdated": "Zuordnung für \"{title}\" aktualisiert.",

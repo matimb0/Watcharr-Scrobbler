@@ -170,7 +170,7 @@
     "needPermission": "Watcharr Scrobbler is not allowed to read {service} yet. Click \"Reload\" to grant access.",
     "permissionBlocked": "The browser did not grant access to {service}. Allow it in about:addons → Watcharr Scrobbler → Permissions, then reload this page.",
     "noteLead": "Please note:",
-    "primeVideoNote": "Sign in with the right account on Prime Video AND on Amazon. The history is fetched through both sessions – if different accounts are logged in there, the history is incomplete or belongs to another account.",
+    "primeVideoNote": "Sign in with the same account on Prime Video AND on Amazon. The history is fetched through both sessions – if different accounts are logged in there, the history is incomplete or belongs to another account.",
     "searchFailed": "Search failed: {error}",
     "changeMatch": "Change match",
     "matchUpdated": "Match for \"{title}\" updated.",
