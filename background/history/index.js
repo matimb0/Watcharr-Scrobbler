@@ -386,16 +386,37 @@ const WatcharrHistory = (() => {
    * Import / rematch
    * ------------------------------------------------------------------ */
 
-  /** Overrides an item's match with a search result chosen by the user. */
-  async function rematch(key, result) {
+  /**
+   * Overrides an item: a new match from a search result chosen by the user
+   * and/or a corrected season/episode (episode rows). Either part may be
+   * omitted – a pure season/episode correction keeps the existing match.
+   */
+  async function rematch(key, result, episode) {
     const item = itemMap.get(key) || items.find((x) => x.key === key);
     if (!item) return null;
     if (!itemMap.has(item.key)) itemMap.set(item.key, item);
 
-    item.match = matcher.resultToMatch(result);
-    item.matchError = item.match ? null : "no match";
-    item.matchErrorCode = item.match ? null : "no_match";
-    // Episode status for the new match (display only).
+    // Optional correction of season/episode (rows of a series). Season 0
+    // (specials) is valid, an episode number starts at 1. Movies are never
+    // affected, and a null field leaves the current value untouched.
+    if (episode && item.isTv) {
+      const season = Number(episode.season);
+      const number = Number(episode.episode);
+      if (episode.season != null && Number.isInteger(season) && season >= 0) {
+        item.season = season;
+      }
+      if (episode.episode != null && Number.isInteger(number) && number >= 1) {
+        item.episode = number;
+      }
+    }
+
+    // A search result replaces the match; without one the match is kept.
+    if (result && result.ids) {
+      item.match = matcher.resultToMatch(result);
+      item.matchError = item.match ? null : "no match";
+      item.matchErrorCode = item.match ? null : "no_match";
+    }
+    // Episode status for the (possibly new) match (display only).
     await matcher.resolveItemEpisodeStatus(item);
     // A new match is a new state: reset the import status so the row becomes
     // selectable again when the new match is not in Watcharr yet.

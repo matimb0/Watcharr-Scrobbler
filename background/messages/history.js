@@ -75,7 +75,10 @@
     "watcharr:history:rematch": (msg) =>
       guarded(async () => ({
         ok: true,
-        item: await WatcharrHistory.rematch(msg.key, msg.result),
+        item: await WatcharrHistory.rematch(msg.key, msg.result, {
+          season: msg.season,
+          episode: msg.episode,
+        }),
       })),
 
     "watcharr:history:import": (msg) =>

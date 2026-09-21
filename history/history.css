@@ -532,6 +532,21 @@ button:disabled {
   margin-top: 1px;
 }
 
+/* Episode of the matched series. Shown explicitly on the Watcharr side, so the
+   row says WHICH episode is meant instead of hiding it inside a badge. */
+.watcharr .info .episode {
+  display: inline-block;
+  margin-top: 3px;
+  padding: 1px 7px;
+  border-radius: 6px;
+  background: var(--bg-elev-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+}
+
 .badges {
   display: flex;
   gap: 6px;
@@ -645,6 +660,34 @@ button:disabled {
   color: var(--text);
   font-size: 13px;
   outline: none;
+}
+
+/* Season/episode correction in the "change match" popover (episode rows). The
+   fields keep the panel's input look but stay compact and do not stretch. */
+.rematch-episode {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.rematch-episode label {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+.rematch-episode input {
+  width: 72px;
+  font-size: 13px;
+}
+
+.rematch-episode .apply-episode {
+  font-size: 12px;
+  padding: 7px 12px;
 }
 
 .rematch-panel .hint {

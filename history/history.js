@@ -308,6 +308,13 @@ function episodeRecordedAtDate(it) {
   );
 }
 
+/** "S1E2" for an episode row, otherwise "". Season 0 (specials) is valid. */
+function episodeLabel(it) {
+  return it.isTv && it.season != null && it.episode != null
+    ? "S" + it.season + "E" + it.episode
+    : "";
+}
+
 /** Already transferred rows are not selectable. */
 function isTransferred(it) {
   if (!it || !it.match) return false;
@@ -356,15 +363,14 @@ function matchBadge(it) {
     it.episode != null &&
     it.episodeStatusKnown
   ) {
-    const label = "S" + it.season + "E" + it.episode;
+    // The episode itself (S1E2) is shown on the Watcharr side of the row, so
+    // the badge only carries the status of this episode.
     if (exactMatch) {
       // Exact mode: only the identical watch (date AND time) counts.
       if (episodeRecordedAtDate(it)) {
         // Recorded in Watcharr at the exact same date+time.
         return (
           '<span class="badge inwatcharr">' +
-          label +
-          " " +
           escapeHtml(ts("history.badgeWatched")) +
           "</span>"
         );
@@ -376,8 +382,6 @@ function matchBadge(it) {
           '<span class="badge readd" title="' +
           escapeHtml(ts("history.badgeReaddTitle")) +
           '">' +
-          label +
-          " " +
           escapeHtml(ts("history.badgeReadd")) +
           "</span>"
         );
@@ -386,8 +390,6 @@ function matchBadge(it) {
         // Series in Watcharr, but this exact watch (date+time) is not recorded.
         return (
           '<span class="badge missing">' +
-          label +
-          " " +
           escapeHtml(ts("history.badgeMissing")) +
           "</span>"
         );
@@ -397,8 +399,6 @@ function matchBadge(it) {
       if (episodeSeen(it.episodeStatus)) {
         return (
           '<span class="badge inwatcharr">' +
-          label +
-          " " +
           escapeHtml(ts("history.badgeWatched")) +
           "</span>"
         );
@@ -406,8 +406,6 @@ function matchBadge(it) {
       if (it.match.watchedId) {
         return (
           '<span class="badge missing">' +
-          label +
-          " " +
           escapeHtml(ts("history.badgeMissing")) +
           "</span>"
         );
@@ -492,6 +490,9 @@ function rowHtml(it) {
         '" alt="" loading="lazy" />'
       : '<div class="poster ph">—</div>';
   const matchName = it.match ? it.match.name || it.title : "—";
+  // Episode rows: the concrete episode belongs on the Watcharr side too, so
+  // the comparison shows WHICH episode of the matched series is meant.
+  const epLabel = episodeLabel(it);
   const matchMeta = it.match
     ? "TMDB " +
       it.match.tmdbId +
@@ -527,6 +528,7 @@ function rowHtml(it) {
     '<div class="name">' +
     escapeHtml(matchName) +
     "</div>" +
+    (epLabel ? '<div class="episode">' + escapeHtml(epLabel) + "</div>" : "") +
     '<div class="meta">' +
     escapeHtml(matchMeta) +
     "</div>" +
@@ -1114,6 +1116,7 @@ els.list.addEventListener("click", async (e) => {
   if (!btn) return;
   const row = btn.closest(".row");
   const key = row.dataset.key;
+  const it = allItems.find((x) => x.key === key);
   const existing = document.querySelector(
     '.rematch-panel[data-key="' + escapeHtml(key) + '"]',
   );
@@ -1121,13 +1124,41 @@ els.list.addEventListener("click", async (e) => {
     existing.remove();
     return;
   }
+  // Episode rows: season/episode are editable, because a wrong episode number
+  // must be correctable even when the series match itself is right.
+  const isEpisode = !!(
+    it &&
+    it.isTv &&
+    it.season != null &&
+    it.episode != null
+  );
+  const episodeFields = isEpisode
+    ? '<div class="rematch-episode">' +
+      "<label><span>" +
+      escapeHtml(ts("history.episodeSeason")) +
+      '</span><input type="number" class="ep-season" min="0" step="1" ' +
+      'inputmode="numeric" value="' +
+      it.season +
+      '" /></label>' +
+      "<label><span>" +
+      escapeHtml(ts("history.episodeNumber")) +
+      '</span><input type="number" class="ep-episode" min="1" step="1" ' +
+      'inputmode="numeric" value="' +
+      it.episode +
+      '" /></label>' +
+      '<button type="button" class="ghost apply-episode">' +
+      escapeHtml(ts("history.episodeApply")) +
+      "</button>" +
+      "</div>"
+    : "";
   // Insert panel
   const panel = document.createElement("div");
   panel.className = "rematch-panel";
   panel.dataset.key = key;
   replaceFromHtml(
     panel,
-    '<input type="search" placeholder="' +
+    episodeFields +
+      '<input type="search" class="rematch-search" placeholder="' +
       escapeHtml(ts("history.searchTitle")) +
       '" autocomplete="off" />' +
       '<div class="hint">' +
@@ -1136,7 +1167,26 @@ els.list.addEventListener("click", async (e) => {
       '<div class="rematch-results"></div>',
   );
   row.after(panel);
-  const input = panel.querySelector("input");
+
+  // Season/episode as currently typed into the (editable) number fields.
+  const readEpisode = () => {
+    if (!isEpisode) return null;
+    const season = parseInt(panel.querySelector(".ep-season").value, 10);
+    const number = parseInt(panel.querySelector(".ep-episode").value, 10);
+    return {
+      season: Number.isInteger(season) && season >= 0 ? season : it.season,
+      episode: Number.isInteger(number) && number >= 1 ? number : it.episode,
+    };
+  };
+  const applyEpisodeBtn = panel.querySelector(".apply-episode");
+  if (applyEpisodeBtn) {
+    // "Apply" corrects season/episode without touching the series match.
+    applyEpisodeBtn.addEventListener("click", () => {
+      rematch(key, null, readEpisode());
+    });
+  }
+
+  const input = panel.querySelector(".rematch-search");
   input.focus();
 
   const runSearch = async () => {
@@ -1185,7 +1235,7 @@ els.list.addEventListener("click", async (e) => {
             "</div></div>",
         );
         item.addEventListener("click", () => {
-          rematch(key, r);
+          rematch(key, r, readEpisode());
           panel.remove();
         });
         resultsBox.appendChild(item);
@@ -1213,11 +1263,15 @@ els.list.addEventListener("click", async (e) => {
   });
 });
 
-async function rematch(key, result) {
+/** Applies a new match (`result`, a TMDB search hit) and/or a corrected
+ *  season/episode (`episode`) to one history row. */
+async function rematch(key, result, episode) {
   const resp = await browser.runtime.sendMessage({
     type: "watcharr:history:rematch",
     key,
     result,
+    season: episode ? episode.season : null,
+    episode: episode ? episode.episode : null,
   });
   if (resp && resp.ok && resp.item) {
     const it = allItems.find((x) => x.key === key);
@@ -1226,10 +1280,21 @@ async function rematch(key, result) {
       if (isTransferred(it)) it.selected = false;
     }
     render();
-    setStatus(
-      "success",
-      ts("history.matchUpdated", { title: resp.item.title || key }),
-    );
+    if (result) {
+      setStatus(
+        "success",
+        ts("history.matchUpdated", { title: resp.item.title || key }),
+      );
+    } else {
+      // Episode-only correction (season/episode), match unchanged.
+      setStatus(
+        "success",
+        ts("history.episodeUpdated", {
+          season: resp.item.season,
+          episode: resp.item.episode,
+        }),
+      );
+    }
   } else {
     const msg = resp
       ? await describeError(resp, "history.matchCouldNotBeUpdated")
