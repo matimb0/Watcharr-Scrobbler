@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Watcharr Scrobbler",
-  "version": "1.3",
+  "version": "1.4",
   "description": "Automatically scrobbles what you watch on Netflix, Prime Video and Jellyfin into your self-hosted Watcharr instance (like Universal Trakt Scrobbler, only for Watcharr).",
   "homepage_url": "https://github.com/matimb0/Watcharr-Scrobbler",
   "browser_specific_settings": {
