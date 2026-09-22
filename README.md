@@ -148,7 +148,7 @@ side by side, and the selected ones can be imported with **“Import selected”
 
 ## Troubleshooting
 
-> **Note:** The Watcharr API can currently (v4.2.1) only import exact viewing dates for
+> **Note:** The Watcharr API can currently (v4.2.2) only import exact viewing dates for
 > movies/series (not per episode). The history is therefore transferred
 > correctly in terms of what was watched. In the meantime, you shouldn't use
 > the exact match Mode.
