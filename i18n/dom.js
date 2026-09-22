@@ -5,6 +5,7 @@
  *   data-i18n             – replaces the text content (plain text),
  *   data-i18n-html        – replaces the content, allowing a small set of
  *                           inline tags (see TRUSTED_INLINE_TAGS),
+ *   data-i18n-title       – sets the `title` attribute (tooltips),
  *   data-i18n-placeholder – sets the `placeholder` attribute.
  *
  * Values containing {placeholders} need runtime parameters, so the static sweep
@@ -110,6 +111,16 @@
       );
       if (value !== undefined) {
         element.setAttribute("placeholder", M.interpolate(value, {}));
+      }
+    });
+
+    node.querySelectorAll("[data-i18n-title]").forEach((element) => {
+      const value = M.getValue(
+        translations,
+        element.getAttribute("data-i18n-title"),
+      );
+      if (value !== undefined) {
+        element.setAttribute("title", M.interpolate(value, {}));
       }
     });
 

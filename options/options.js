@@ -48,6 +48,7 @@ const els = {
   methodHint: $("#methodHint"),
   usernameField: $("#usernameField"),
   passwordField: $("#passwordField"),
+  footerVersion: $("#footerVersion"),
 };
 
 async function t(key, params = {}) {
@@ -156,6 +157,28 @@ function refreshProviderLabels() {
         ? I18NApi.tSync("settings.providerEmby", {}, currentLanguage)
         : "Emby";
   }
+}
+
+/** Footer signature: "Version 1.3" of the RUNNING build, read from the
+ *  extension's own manifest. A release therefore only bumps `version` in
+ *  manifest.json – the pages never carry a version number that could go stale.
+ *  Without an extension context (page opened as a plain file) the label stays
+ *  hidden instead of showing a wrong number. */
+function renderFooterVersion() {
+  const el = els.footerVersion;
+  if (!el) return;
+  let version = "";
+  try {
+    version = (browser.runtime.getManifest() || {}).version || "";
+  } catch (_) {
+    /* no extension context – nothing to show */
+  }
+  if (!version) return;
+  el.textContent =
+    I18NApi && I18NApi.tSync
+      ? I18NApi.tSync("settings.version", { version }, currentLanguage)
+      : "Version " + version;
+  el.classList.remove("hidden");
 }
 
 function renderProviders(list) {
@@ -277,6 +300,9 @@ async function applyLanguage(lang, persist = false) {
   }
   // (Re-)apply the Emby override after the static data-i18n sweep.
   refreshProviderLabels();
+  // The footer's version label is built at runtime (it needs the manifest), so
+  // it follows a language change like the other dynamic labels.
+  renderFooterVersion();
 }
 
 async function load() {

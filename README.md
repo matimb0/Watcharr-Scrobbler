@@ -38,7 +38,7 @@ integrated as services.
   [Firefox Add-ons Store](https://addons.mozilla.org/de/firefox/addon/watcharr-scrobbler/) – this is the
   recommended way to install it.
 - **Manual (`.xpi`):** Alternatively, you can install the `.xpi` file attached
-  to the respective [GitHub Release](https://github.com/matzewr/Watcharr-Scrobbler/releases)
+  to the respective [GitHub Release](https://github.com/matimb0/Watcharr-Scrobbler/releases)
   (the `.xpi` is uploaded to each release as soon as it has been signed by
   Mozilla). To install it manually, open `about:addons` in Firefox, click the
   gear icon and choose **“Install Add-on From File…**”.

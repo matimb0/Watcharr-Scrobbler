@@ -77,6 +77,28 @@ body {
   color: var(--text);
 }
 
+/* Heading with an extra marker next to the title (e.g. "Optional"). */
+.card h2.card-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* Muted pill marking a section that is not required for scrobbling to work. */
+.badge {
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(154, 160, 166, 0.35);
+  background: rgba(154, 160, 166, 0.12);
+  color: var(--text-dim);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  line-height: 1.5;
+}
+
 /* Banner */
 .banner {
   padding: 10px 12px;
@@ -347,10 +369,79 @@ button.ghost:hover:not(:disabled) {
   font-weight: 600;
 }
 
-/* Footer */
-footer {
-  margin-top: 28px;
-  text-align: center;
+/* Footer – a short app signature: product name on the left, version of the
+   installed build on the right, separated from the last card by a hairline. */
+.app-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  flex-wrap: wrap;
+  margin-top: 32px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
   color: var(--text-dim);
   font-size: 12px;
+}
+
+.footer-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.footer-logo {
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  flex: none;
+}
+
+.footer-name {
+  color: var(--text);
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Version of the running build – filled from the manifest (see
+   renderFooterVersion in options.js), hence hidden until it is known. */
+.footer-version {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* Right side of the footer: project link and version. */
+.footer-links {
+  display: inline-flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.footer-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-dim);
+  font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.footer-link:hover,
+.footer-link:focus-visible {
+  color: var(--accent-2);
+  text-decoration: underline;
+}
+
+/* The GitHub mark is a filled glyph, unlike the stroke icons used in the bar
+   of the history page – so it overrides the shared path styling. */
+.footer-link .repo-icon {
+  width: 15px;
+  height: 15px;
+  flex: none;
+  fill: currentColor;
+  stroke: none;
 }
