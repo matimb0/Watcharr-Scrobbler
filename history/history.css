@@ -107,27 +107,29 @@ body {
   flex: none;
 }
 
-/* The switch symbol – hidden while there is only one open service (nothing to
-   switch to). It is a pseudo-element, so the button's text stays exactly the
-   service name; and it only EXISTS as content while switching is possible, so
-   screen readers never announce an invisible symbol. */
-.service-btn::after {
-  content: "";
-  font-size: 13px;
-}
-
+/* With a single open service there is nothing to switch to, and the pill is
+   then only the service name – centered, nothing hinting at a missing symbol.
+   That is why the `::after` box below exists ONLY in the toggleable state: an
+   empty box would still be a flex item, so the `gap` would apply and the name
+   would sit 6px closer to the left edge than to the right one. */
 .service-btn.toggleable {
   cursor: pointer;
   border-color: var(--accent-2);
   color: var(--accent-2);
+  /* Slightly less on the right: the arrow glyph brings its own side bearing,
+     so equal padding would make it look pushed to the edge. */
+  padding-right: 11px;
 }
 
 .service-btn.toggleable:hover {
   background: var(--bg-elev);
 }
 
+/* The switch symbol – a pseudo-element, so the button's text stays exactly the
+   service name. Screen readers never announce it as content. */
 .service-btn.toggleable::after {
   content: "⇄";
+  font-size: 13px;
   opacity: 0.8;
 }
 
