@@ -168,9 +168,9 @@ body {
   cursor: pointer;
 }
 
-/* Hairline between the buttons of one group (without breaking the
-   rounded hover background). */
-.toolgroup .tool + .tool {
+/* Hairline between the entries of one group (buttons as well as the
+   dropdown wrappers) – without breaking the rounded hover background. */
+.toolgroup > * + * {
   box-shadow: inset 1px 0 0 var(--border);
 }
 
@@ -205,6 +205,96 @@ body {
   stroke-linecap: round;
   stroke-linejoin: round;
   opacity: 0.9;
+}
+
+/* Dropdown menu of a toolbar button (see .menu-wrap in history.html).
+   Anchored to its button and opened only on click, so the bar itself stays
+   narrow; the top bar is sticky (z-index 10) and therefore above the list. */
+.menu-wrap {
+  position: relative;
+  display: flex;
+}
+
+/* The caret hinting at the dropdown – smaller and quieter than a tool icon. */
+.tool .caret {
+  width: 11px;
+  height: 11px;
+  margin-left: -1px;
+  opacity: 0.65;
+}
+
+.menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 20;
+  min-width: 200px;
+  padding: 5px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-elev-2);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.5);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+/* Caption of a menu section ("Display order" / "Matching"). */
+.menu-caption {
+  margin: 5px 9px 3px;
+  color: var(--text-dim);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.menu-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.3;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+/* Checkmark of the active option (radio rows). A pseudo-element – the label is
+   set by the i18n sweep and must not lose the mark. */
+.menu-item::before {
+  content: "";
+  flex: none;
+  width: 13px;
+  color: var(--accent-2);
+  font-weight: 700;
+}
+
+.menu-item[aria-checked="true"]::before {
+  content: "✓";
+}
+
+.menu-item:hover:not(:disabled),
+.menu-item:focus-visible {
+  background: var(--bg-elev);
+}
+
+.menu-item:focus-visible {
+  outline: 2px solid var(--accent-2);
+  outline-offset: 0;
+}
+
+.menu-item:disabled {
+  color: var(--text-dim);
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 /* Narrow windows: the toolbar wraps below the brand and keeps its groups. */

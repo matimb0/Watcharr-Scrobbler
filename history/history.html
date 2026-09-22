@@ -22,41 +22,19 @@
         ></button>
       </div>
 
-      <!-- Tool bar – two groups so the bar stays readable:
-           1. "data": reload / load from file / export / back to the service,
-           2. "view": display order and matching mode (toggle buttons).
-           Each label lives in its own span, so the translations never wipe
-           the icons; the toggles report their state through aria-pressed. -->
+      <!-- Tool bar – deliberately compact: only "Reload" (and, in file mode,
+           "Back") stays a button, everything else lives in two dropdown menus:
+             "view" – display order and matching mode (radio rows),
+             "data" – export the service history / import a history file.
+           Both menus carry the current state themselves, so no label in the
+           bar has to change with it. Each label lives in its own span, so the
+           translations never wipe the icons. -->
       <div class="tools">
-        <div class="toolgroup">
-          <button id="reloadBtn" class="tool" type="button">
-            <svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M21 12a9 9 0 1 1-2.64-6.36" />
-              <path d="M21 3v6h-6" />
-            </svg>
-            <span class="tool-label" data-i18n="history.reload">Reload</span>
-          </button>
-          <button id="fileBtn" class="tool" type="button">
-            <svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3" />
-              <path d="M12 3v12" />
-              <path d="m7 10 5 5 5-5" />
-            </svg>
-            <span class="tool-label" data-i18n="history.loadFile">
-              Load from file …
-            </span>
-          </button>
-          <button id="exportBtn" class="tool" type="button">
-            <svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3" />
-              <path d="M12 15V3" />
-              <path d="m7 8 5-5 5 5" />
-            </svg>
-            <span class="tool-label" data-i18n="history.exportBtn">
-              Export …
-            </span>
-          </button>
-          <button id="backBtn" class="tool hidden" type="button">
+        <!-- Contextual: takes you back from an imported file to the live
+             service history (file mode only – hence its own group, so hiding
+             it does not leave an empty slot in the strip). -->
+        <div id="backGroup" class="toolgroup hidden">
+          <button id="backBtn" class="tool" type="button">
             <svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
               <path d="M19 12H5" />
               <path d="m12 19-7-7 7-7" />
@@ -66,27 +44,146 @@
         </div>
 
         <div class="toolgroup">
-          <button id="orderBtn" class="tool" type="button" aria-pressed="false">
+          <button id="reloadBtn" class="tool" type="button">
             <svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
-              <path d="m3 16 4 4 4-4" />
-              <path d="M7 20V4" />
-              <path d="m21 8-4-4-4 4" />
-              <path d="M17 4v16" />
+              <path d="M21 12a9 9 0 1 1-2.64-6.36" />
+              <path d="M21 3v6h-6" />
             </svg>
-            <span id="orderLabel" class="tool-label">Newest first</span>
+            <span class="tool-label" data-i18n="history.reload">Reload</span>
           </button>
-          <button
-            id="matchModeBtn"
-            class="tool"
-            type="button"
-            aria-pressed="false"
-          >
-            <svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
-              <circle cx="12" cy="12" r="9" />
-              <circle cx="12" cy="12" r="3.5" />
-            </svg>
-            <span id="matchModeLabel" class="tool-label">exact matches</span>
-          </button>
+
+          <!-- View: display order and matching mode. The radio rows show the
+               current state (the checkmark is a CSS ::before, so translations
+               cannot wipe it) and report it via aria-checked. -->
+          <div class="menu-wrap">
+            <button
+              id="viewBtn"
+              class="tool"
+              type="button"
+              aria-haspopup="true"
+              aria-expanded="false"
+            >
+              <svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M5 7h14" />
+                <path d="M5 17h14" />
+                <circle cx="9.5" cy="7" r="2" />
+                <circle cx="14.5" cy="17" r="2" />
+              </svg>
+              <span class="tool-label" data-i18n="history.viewMenu">View</span>
+              <svg class="ico caret" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="m6 9 6 6 6-6" />
+              </svg>
+            </button>
+            <div
+              id="viewMenu"
+              class="menu hidden"
+              role="menu"
+              aria-labelledby="viewBtn"
+            >
+              <p
+                class="menu-caption"
+                role="presentation"
+                data-i18n="history.orderGroup"
+              >
+                Display order
+              </p>
+              <button
+                id="orderNewestBtn"
+                class="menu-item"
+                type="button"
+                role="menuitemradio"
+                aria-checked="true"
+                data-i18n="history.newestFirst"
+              >
+                Newest first
+              </button>
+              <button
+                id="orderOldestBtn"
+                class="menu-item"
+                type="button"
+                role="menuitemradio"
+                aria-checked="false"
+                data-i18n="history.oldestFirst"
+              >
+                Oldest first
+              </button>
+              <p
+                class="menu-caption"
+                role="presentation"
+                data-i18n="history.matchGroup"
+              >
+                Matching
+              </p>
+              <button
+                id="matchExactBtn"
+                class="menu-item"
+                type="button"
+                role="menuitemradio"
+                aria-checked="true"
+                data-i18n="history.matchExact"
+              >
+                Exact matches
+              </button>
+              <button
+                id="matchRoughBtn"
+                class="menu-item"
+                type="button"
+                role="menuitemradio"
+                aria-checked="false"
+                data-i18n="history.matchRough"
+              >
+                Rough matches
+              </button>
+            </div>
+          </div>
+
+          <!-- Data: the complete viewing history of the service as a file
+               (export) or the other way round (import). -->
+          <div class="menu-wrap">
+            <button
+              id="dataBtn"
+              class="tool"
+              type="button"
+              aria-haspopup="true"
+              aria-expanded="false"
+            >
+              <svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M7 3v13" />
+                <path d="m3.5 12.5 3.5 3.5 3.5-3.5" />
+                <path d="M17 21V8" />
+                <path d="m13.5 11.5 3.5-3.5 3.5 3.5" />
+              </svg>
+              <span class="tool-label" data-i18n="history.dataMenu">Data</span>
+              <svg class="ico caret" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="m6 9 6 6 6-6" />
+              </svg>
+            </button>
+            <div
+              id="dataMenu"
+              class="menu hidden"
+              role="menu"
+              aria-labelledby="dataBtn"
+            >
+              <button
+                id="exportBtn"
+                class="menu-item"
+                type="button"
+                role="menuitem"
+                data-i18n="history.exportBtn"
+              >
+                Export …
+              </button>
+              <button
+                id="fileBtn"
+                class="menu-item"
+                type="button"
+                role="menuitem"
+                data-i18n="history.loadFile"
+              >
+                Load from file …
+              </button>
+            </div>
+          </div>
         </div>
       </div>
 

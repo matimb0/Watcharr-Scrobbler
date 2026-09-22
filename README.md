@@ -94,7 +94,7 @@ service tab.
 
 ## History export
 
-**“Export …”** on the history page writes the **complete viewing history** of
+**“Data” › “Export …”** on the history page writes the **complete viewing history** of
 the current service (Netflix, Prime Video or Jellyfin) into a file – nothing is
 imported into Watcharr. Choose **CSV** or **JSON**:
 
@@ -122,10 +122,10 @@ option the export needs no Watcharr connection at all.
 
 ## History import from a file
 
-**“Load from file …”** on the history page fills the list from a previously
-exported **CSV or JSON** file instead of the open service tab. Everything else
-stays the same: the entries are matched against Watcharr, shown side by side,
-and the selected ones can be imported with **“Import selected”**.
+**“Data” › “Load from file …”** on the history page fills the list from a
+previously exported **CSV or JSON** file instead of the open service tab.
+Everything else stays the same: the entries are matched against Watcharr, shown
+side by side, and the selected ones can be imported with **“Import selected”**.
 
 - Rows that carry **TMDB data** are matched on exactly that TMDB ID (the ID is
   looked up through Watcharr, which also returns whether the title is already
@@ -133,13 +133,13 @@ and the selected ones can be imported with **“Import selected”**.
   be resolved are marked and can be corrected manually via **“Change match”**.
 - Rows **without** TMDB data are matched by title/year like a service history.
 - The file order does not matter: entries are sorted by their watch date
-  (newest first), exactly like a service history, so **Newest/Oldest first**
-  behaves identically.
+  (newest first), exactly like a service history, so **View › Newest first /
+  Oldest first** behaves identically.
 - Besides our own export, other column spellings are understood
   (`name`, `seasonNumber`/`episodeNumber`, `watched_date`, nested
   `ids.tmdb`, `Film`/`Series` type names, …).
-- **“Back to service history”** returns to the history of the open service tab;
-  **Export** is only available for the service history.
+- **“Back”** returns to the history of the open service tab; **Export** (in the
+  same **“Data”** menu) is only available for the service history.
 
 <br>
 

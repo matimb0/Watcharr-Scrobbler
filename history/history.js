@@ -131,8 +131,7 @@ async function applyLanguage(lang) {
   // Labels that depend on the CURRENT state (display order, matching mode,
   // file mode) are not part of the static data-i18n sweep – refresh them here
   // so they follow a language change as well.
-  updateOrderBtn();
-  updateMatchModeBtn();
+  updateViewMenu();
   updateSourceUI();
   updateServiceNote();
 }
@@ -145,13 +144,20 @@ const els = {
   selectNoneBtn: $("#selectNoneBtn"),
   filterBox: $("#filterBox"),
   importBtn: $("#importBtn"),
-  orderBtn: $("#orderBtn"),
-  orderLabel: $("#orderLabel"),
+  // Top bar: the buttons that stay in the bar plus the two dropdown menus
+  // ("view" = display order + matching mode, "data" = export/import).
+  viewBtn: $("#viewBtn"),
+  viewMenu: $("#viewMenu"),
+  orderNewestBtn: $("#orderNewestBtn"),
+  orderOldestBtn: $("#orderOldestBtn"),
+  matchExactBtn: $("#matchExactBtn"),
+  matchRoughBtn: $("#matchRoughBtn"),
+  dataBtn: $("#dataBtn"),
+  dataMenu: $("#dataMenu"),
   fileBtn: $("#fileBtn"),
   fileInput: $("#fileInput"),
+  backGroup: $("#backGroup"),
   backBtn: $("#backBtn"),
-  matchModeBtn: $("#matchModeBtn"),
-  matchModeLabel: $("#matchModeLabel"),
   confirmModal: $("#confirmModal"),
   orderOkBtn: $("#orderOkBtn"),
   orderCancelBtn: $("#orderCancelBtn"),
@@ -641,57 +647,103 @@ function updateImportButton() {
   els.importBtn.textContent = ts("history.importSelected", { count: n });
 }
 
-/** Sets label + "on" state of a toggle button in the top bar. The label lives
- *  in its own span (the button also holds an icon), and `aria-pressed` tells
- *  screen readers whether the toggle is currently active. */
-function setToggleState(btn, labelEl, text, pressed) {
-  if (labelEl) labelEl.textContent = text;
-  if (!btn) return;
-  btn.classList.toggle("active", !!pressed);
-  btn.setAttribute("aria-pressed", String(!!pressed));
+// -- Top bar menus ------------------------------------------------------------
+// Two dropdowns keep the bar narrow: "view" (display order + matching mode)
+// and "data" (export the service history / import a file). Only one is open at
+// a time; a click outside, Esc or picking an entry closes it again.
+
+/** The (button, menu) pairs of the top bar. */
+const MENUS = [
+  { btn: "viewBtn", menu: "viewMenu" },
+  { btn: "dataBtn", menu: "dataMenu" },
+];
+
+/** Opens one menu (or, with `null`, closes both) and keeps `aria-expanded`
+ *  in sync with what is actually visible. */
+function openMenu(name) {
+  for (const m of MENUS) {
+    const open = m.btn === name;
+    els[m.menu].classList.toggle("hidden", !open);
+    els[m.btn].setAttribute("aria-expanded", String(open));
+  }
 }
 
-/** Updates the sort-order toggle in the tool bar (label = current order).
- *  The visible text lives in its own span, so the icon is kept. */
-function updateOrderBtn() {
-  setToggleState(
-    els.orderBtn,
-    els.orderLabel,
-    ts(oldestFirst ? "history.oldestFirst" : "history.newestFirst"),
-    oldestFirst,
-  );
-  els.orderBtn.title = ts("history.switchOrder", {
-    mode: ts(oldestFirst ? "history.newestFirst" : "history.oldestFirst"),
-  });
+function closeMenus() {
+  openMenu(null);
 }
 
-/** Updates the matching-mode toggle (label/title = current mode).
- * "Exact" is shown in the normal (neutral) style, "rough" is highlighted
- * in red to signal the less strict matching. */
-function updateMatchModeBtn() {
-  setToggleState(
-    els.matchModeBtn,
-    els.matchModeLabel,
-    ts(exactMatch ? "history.matchExact" : "history.matchRough"),
-    !exactMatch,
-  );
-  els.matchModeBtn.title = ts(
-    exactMatch ? "history.matchExactTitle" : "history.matchRoughTitle",
-  );
+/** Whether one of the menus is currently open. */
+function anyMenuOpen() {
+  return MENUS.some((m) => !els[m.menu].classList.contains("hidden"));
 }
 
-// Toggle between exact (date+time must match) and rough (episode finished?)
-// matching. Only affects the display/selection – the resolution already
-// delivers both the episode status and the exact-date match.
-els.matchModeBtn.addEventListener("click", () => {
-  exactMatch = !exactMatch;
-  updateMatchModeBtn();
+/** Click on a bar button: toggles its own menu and closes the other one. */
+function toggleMenu(name) {
+  if (els[name].getAttribute("aria-expanded") === "true") closeMenus();
+  else openMenu(name);
+}
+
+// Closing on a click outside: the menu buttons themselves live inside
+// `.menu-wrap`, so they keep their own click handling.
+document.addEventListener("click", (e) => {
+  if (!e.target.closest(".menu-wrap")) closeMenus();
+});
+
+/** Sets the `aria-checked` state of a menu row. The visible checkmark is a CSS
+ *  pseudo-element, so the i18n sweep may replace the label at any time. */
+function setMenuRadio(btn, checked) {
+  if (btn) btn.setAttribute("aria-checked", String(!!checked));
+}
+
+/** Syncs the view menu with the current display order and matching mode, and
+ *  highlights the bar button while a non-default state is active (oldest first
+ *  or rough matching) – the same signal the old toggle buttons gave. The menu
+ *  rows carry their state themselves, so no label in the bar has to follow.
+ *  Also the place where the runtime labels of the bar are (re)translated. */
+function updateViewMenu() {
+  setMenuRadio(els.orderNewestBtn, !oldestFirst);
+  setMenuRadio(els.orderOldestBtn, oldestFirst);
+  setMenuRadio(els.matchExactBtn, exactMatch);
+  setMenuRadio(els.matchRoughBtn, !exactMatch);
+
+  if (els.viewBtn) {
+    els.viewBtn.classList.toggle("active", oldestFirst || !exactMatch);
+    els.viewBtn.title = ts("history.viewTitle");
+  }
+  if (els.orderOldestBtn) {
+    // Switching to it loads the complete history once and asks beforehand.
+    els.orderOldestBtn.title = ts("history.oldestFirstTitle");
+  }
+  if (els.matchExactBtn) {
+    els.matchExactBtn.title = ts("history.matchExactTitle");
+  }
+  if (els.matchRoughBtn) {
+    els.matchRoughBtn.title = ts("history.matchRoughTitle");
+  }
+  if (els.dataBtn) els.dataBtn.title = ts("history.dataTitle");
+}
+
+/** Switches the matching mode between exact (date+time must match) and rough
+ *  (is the episode already finished?). Only affects display/selection – the
+ *  resolution already delivers both the episode status and the exact-date
+ *  match. */
+function setExactMatch(on) {
+  closeMenus();
+  if (exactMatch === !!on) return;
+  exactMatch = !!on;
+  updateViewMenu();
   // Rows that are now "already recorded" must not stay selected.
   for (const it of allItems) {
     if (isTransferred(it)) it.selected = false;
   }
   render();
-});
+}
+
+// The view menu holds both radio groups (order and matching mode).
+els.viewBtn.addEventListener("click", () => toggleMenu("viewBtn"));
+els.dataBtn.addEventListener("click", () => toggleMenu("dataBtn"));
+els.matchExactBtn.addEventListener("click", () => setExactMatch(true));
+els.matchRoughBtn.addEventListener("click", () => setExactMatch(false));
 
 // -- Source of the list: service history or an imported file -----------------
 // The page can either show the history crawled from the open service tab or an
@@ -725,20 +777,22 @@ function setFileMode(on, name) {
 
 /** Shows/hides the file-mode controls (back button, export availability). */
 function updateSourceUI() {
+  if (els.backGroup) {
+    // "Back" only makes sense for an imported file. It has its own group so
+    // that hiding it does not leave an empty slot in the tool strip.
+    els.backGroup.classList.toggle("hidden", !fileMode);
+  }
   if (els.backBtn) {
-    els.backBtn.classList.toggle("hidden", !fileMode);
     // Short label in the bar, the descriptive text as tooltip.
     els.backBtn.title = ts("history.backToService");
   }
   if (els.fileBtn) {
-    // "Load from file" and "Back" are two sides of the same switch: while an
-    // imported file is shown, the back button takes that slot.
-    els.fileBtn.classList.toggle("hidden", fileMode);
+    // Loading another file stays possible while an imported one is shown.
     els.fileBtn.title = ts("history.loadFileTitle");
   }
   if (els.exportBtn) {
     // Exporting always reads the SERVICE history – in file mode there is
-    // nothing to crawl, so the button is disabled (with an explanation).
+    // nothing to crawl, so the entry is disabled (with an explanation).
     els.exportBtn.disabled = fileMode;
     els.exportBtn.title = fileMode ? ts("history.exportFileMode") : "";
   }
@@ -827,7 +881,7 @@ async function load() {
   loadingInitial = true; // lock infinite scroll until this load finishes
   const gen = ++loadGen; // supersede any in-flight "load more" / older loads
   clearStatus();
-  updateOrderBtn();
+  updateViewMenu();
   const loadingMsg = await t(
     fileMode
       ? "history.loadingFile"
@@ -848,7 +902,7 @@ async function load() {
       // User aborted the "oldest first" full load -> fall back to the
       // default (newest first) order and load normally again.
       oldestFirst = false;
-      updateOrderBtn();
+      updateViewMenu();
       loadingInitial = false; // release the lock so the reload can start
       load();
       return false;
@@ -1051,20 +1105,25 @@ function closeOrderConfirm() {
   els.confirmModal.classList.add("hidden");
 }
 
-els.orderBtn.addEventListener("click", () => {
-  if (loadingInitial) return; // ignore while a full load is running
-  if (!oldestFirst) {
-    openOrderConfirm(); // switching to oldest first needs confirmation
-  } else {
-    oldestFirst = false; // back to newest first is instant – no confirmation
-    load();
-  }
+els.orderNewestBtn.addEventListener("click", () => {
+  closeMenus();
+  if (loadingInitial || !oldestFirst) return; // already newest first
+  oldestFirst = false; // back to newest first is instant – no confirmation
+  updateViewMenu();
+  load();
+});
+
+els.orderOldestBtn.addEventListener("click", () => {
+  closeMenus();
+  if (loadingInitial || oldestFirst) return; // already oldest first
+  openOrderConfirm(); // switching to oldest first needs confirmation
 });
 
 els.orderOkBtn.addEventListener("click", () => {
   closeOrderConfirm();
   oldestFirst = true;
-  load(); // reloads the list in the new order (label/state is updated in load)
+  updateViewMenu();
+  load(); // reloads the list in the new order
 });
 
 els.orderCancelBtn.addEventListener("click", closeOrderConfirm);
@@ -1075,7 +1134,9 @@ els.confirmModal.addEventListener("click", (e) => {
 });
 document.addEventListener("keydown", (e) => {
   if (e.key !== "Escape") return;
-  if (!els.confirmModal.classList.contains("hidden")) {
+  if (anyMenuOpen()) {
+    closeMenus();
+  } else if (!els.confirmModal.classList.contains("hidden")) {
     closeOrderConfirm();
   } else if (!exporting && !els.exportModal.classList.contains("hidden")) {
     // Esc does not close the export dialog while the crawl is running.
@@ -1561,7 +1622,10 @@ async function runExport() {
   }
 }
 
-els.exportBtn.addEventListener("click", openExportDialog);
+els.exportBtn.addEventListener("click", () => {
+  closeMenus();
+  openExportDialog();
+});
 els.exportOkBtn.addEventListener("click", runExport);
 els.exportCancelBtn.addEventListener("click", async () => {
   if (!exporting) {
@@ -1599,6 +1663,7 @@ els.reloadBtn.addEventListener("click", async () => {
 // Fills the list from a previously exported history file (CSV/JSON) instead of
 // the open service tab; the rows are then matched and imported as usual.
 els.fileBtn.addEventListener("click", () => {
+  closeMenus();
   if (loadingInitial || exporting) return; // one load at a time
   els.fileInput.click();
 });
@@ -2118,7 +2183,7 @@ async function switchProvider(id) {
   renderServiceToggle(availableServices);
   // A different service = a completely different history.
   oldestFirst = false;
-  updateOrderBtn();
+  updateViewMenu();
   load();
 }
 
@@ -2181,7 +2246,7 @@ async function refreshProviders(detection, reason) {
     if (loadingInitial) return false; // a load is running – it owns the list
     // A different service = a completely different history.
     oldestFirst = false;
-    updateOrderBtn();
+    updateViewMenu();
     load();
     return true;
   }
@@ -2266,8 +2331,7 @@ async function initHistory() {
     : "en";
   await applyLanguage(locale);
 
-  updateOrderBtn();
-  updateMatchModeBtn();
+  updateViewMenu();
   updateSourceUI();
 
   dbg("init:", {
