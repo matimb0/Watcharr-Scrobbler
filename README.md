@@ -4,15 +4,15 @@ A browser extension (Firefox and Chrome) that works like the
 [Universal Trakt Scrobbler](https://github.com/trakt-tools/universal-trakt-scrobbler) –
 but **only for your own, self-hosted [Watcharr](https://github.com/sbondCo/Watcharr)-instance**.
 
-**Current status:** **Netflix**, **Amazon Prime Video** and **Jellyfin** are
+**Current status:** **Netflix**, **Prime Video** and **Jellyfin** are
 integrated as services.
 
 <br>
 
 ## What it does
 
-- Automatically detects what is currently playing on Netflix, Amazon Prime
-  Video or Jellyfin (movie or series, including season & episode).
+- Automatically detects what is currently playing on Netflix, Prime Video or
+  Jellyfin (movie or series, including season & episode).
 - Searches for the title via your Watcharr instance (TMDB search) and adds it to your watchlist.
   For Jellyfin the TMDB ID reported by the server is used directly when available.
 - While you are watching, the entry remains **WATCHING**.
@@ -74,7 +74,7 @@ integrated as services.
    that session (access token + user from the web client), so no second login
    and no API key is needed. The content script is registered for exactly that
    server and injected into already-open Jellyfin tabs.
-6. Open Netflix, Amazon Prime Video or your Jellyfin server and get started 🍿
+6. Open Netflix, Prime Video or your Jellyfin server and get started 🍿
 
 You can see the status and progress at any time in the **Popup**.
 
@@ -84,7 +84,7 @@ You can see the status and progress at any time in the **Popup**.
 
 The **History page** (Popup → **“History”**) gives you full
 Control similar to Universal Trakt Scrobbler: a **side-by-side comparison** of each
-watched title (Netflix, Amazon Prime Video or Jellyfin – the service is selected
+watched title (Netflix, Prime Video or Jellyfin – the service is selected
 automatically from the open tab) with the automatically found **Watcharr match**,
 including **match correction** and **selective import**. No separate
 synchronization is required – the page loads the history directly from the open
@@ -95,12 +95,12 @@ service tab.
 ## History export
 
 **“Export …”** on the history page writes the **complete viewing history** of
-the current service (Netflix, Amazon Prime Video or Jellyfin) into a file – nothing is
+the current service (Netflix, Prime Video or Jellyfin) into a file – nothing is
 imported into Watcharr. Choose **CSV** or **JSON**:
 
 | Column                                        | Meaning                                                     |
 | --------------------------------------------- | ----------------------------------------------------------- |
-| `service` / `serviceId`                       | Netflix, Amazon Prime Video or Jellyfin                     |
+| `service` / `serviceId`                       | Netflix, Prime Video or Jellyfin                            |
 | `title`, `type`, `year`                       | Title as reported by the service (`type` = `movie` \| `tv`) |
 | `season`, `episode`                           | Only for series (empty for movies)                          |
 | `watchedAt`                                   | Watch date/time (ISO-8601, UTC)                             |

@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Watcharr Scrobbler",
   "version": "1.3",
-  "description": "Automatically scrobbles what you watch on Netflix, Amazon Prime Video and Jellyfin into your self-hosted Watcharr instance (like Universal Trakt Scrobbler, only for Watcharr).",
+  "description": "Automatically scrobbles what you watch on Netflix, Prime Video and Jellyfin into your self-hosted Watcharr instance (like Universal Trakt Scrobbler, only for Watcharr).",
   "browser_specific_settings": {
     "gecko": {
       "id": "watcharr-scrobbler@mattw",

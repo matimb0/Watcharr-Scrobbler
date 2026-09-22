@@ -55,7 +55,7 @@
     },
     {
       id: "primevideo",
-      name: "Amazon Prime Video",
+      name: "Prime Video",
       urlTest: /(^|\.)primevideo\.com$/i,
       urlPattern: "*://*.primevideo.com/*",
       // The Prime Video API is not only served from primevideo.com: Amazon

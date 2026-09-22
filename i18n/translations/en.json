@@ -1,7 +1,7 @@
 {
   "page": {
     "title": "Watcharr Scrobbler",
-    "subtitle": "Scrobble Netflix, Amazon Prime Video & Jellyfin → Watcharr",
+    "subtitle": "Scrobble Netflix, Prime Video & Jellyfin → Watcharr",
     "settingsTitle": "Watcharr Scrobbler – Settings"
   },
   "settings": {
@@ -19,14 +19,14 @@
     "logout": "Log out",
     "scrobbling": "Scrobbling",
     "scrobblingEnabled": "Scrobbling enabled",
-    "scrobblingHint": "Automatically add movies/shows from Netflix, Amazon Prime Video and Jellyfin to Watcharr.",
+    "scrobblingHint": "Automatically add movies/shows from Netflix, Prime Video and Jellyfin to Watcharr.",
     "threshold": "Mark as watched from … % progress",
     "thresholdHint": "When a movie or episode reaches this progress, it is marked as watched (FINISHED) in Watcharr.",
     "history": "History",
     "historyHint": "Opens the history page with service ↔ Watcharr comparison, match correction, and selective import.",
     "historyBtn": "Open history page",
     "howItWorks": "How it works",
-    "step1": "Open Netflix, Amazon Prime Video or your Jellyfin server and start a movie or series.",
+    "step1": "Open Netflix, Prime Video or your Jellyfin server and start a movie or series.",
     "step2": "The add-on detects the title, season, and episode from the service's player or metadata API.",
     "step3": "It searches for the title via your Watcharr instance (TMDB ID) and adds it to your watchlist (<em>WATCHING</em>).",
     "step4Before": "Once a movie/episode has been watched to ≥",
@@ -72,7 +72,7 @@
   },
   "popup": {
     "nowPlaying": "Now on {service}",
-    "noService": "Open Netflix, Amazon Prime Video or Jellyfin and start a movie or series – the popup will then show the progress.",
+    "noService": "Open Netflix, Prime Video or Jellyfin and start a movie or series – the popup will then show the progress.",
     "notConfigured": "Not configured.",
     "notConfiguredDetail": "Connect your Watcharr instance in the settings.",
     "scrobblingActive": "Scrobbling active",
@@ -98,7 +98,7 @@
   },
   "toolbar": {
     "openSettings": "Open settings",
-    "openService": "Open Netflix, Amazon Prime Video or Jellyfin"
+    "openService": "Open Netflix, Prime Video or Jellyfin"
   },
   "history": {
     "title": "Watcharr Scrobbler – History",

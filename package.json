@@ -2,7 +2,7 @@
   "name": "watcharr-scrobbler",
   "version": "1.3",
   "private": true,
-  "description": "Browser extension (Firefox + Chrome) that automatically scrobbles Netflix and Amazon Prime Video playback into your self-hosted Watcharr instance.",
+  "description": "Browser extension (Firefox + Chrome) that automatically scrobbles Netflix and Prime Video playback into your self-hosted Watcharr instance.",
   "scripts": {
     "icons": "python3 tools/generate_icons.py",
     "format": "prettier --write .",

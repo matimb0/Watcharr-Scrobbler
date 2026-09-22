@@ -1,7 +1,7 @@
 {
   "page": {
     "title": "Watcharr Scrobbler",
-    "subtitle": "Netflix, Amazon Prime Video & Jellyfin → Watcharr scrobbeln",
+    "subtitle": "Netflix, Prime Video & Jellyfin → Watcharr scrobbeln",
     "settingsTitle": "Watcharr Scrobbler – Einstellungen"
   },
   "settings": {
@@ -19,14 +19,14 @@
     "logout": "Abmelden",
     "scrobbling": "Scrobbeln",
     "scrobblingEnabled": "Scrobbeln aktiviert",
-    "scrobblingHint": "Fügt Filme/Serien automatisch aus Netflix, Amazon Prime Video und Jellyfin zu Watcharr hinzu.",
+    "scrobblingHint": "Fügt Filme/Serien automatisch aus Netflix, Prime Video und Jellyfin zu Watcharr hinzu.",
     "threshold": "Als gesehen markieren ab … % Fortschritt",
     "thresholdHint": "Wenn ein Film oder eine Folge diesen Fortschritt erreicht, wird er in Watcharr als gesehen markiert (FINISHED).",
     "history": "Verlauf",
     "historyHint": "Öffnet die Verlaufseite mit Gegenüberstellung, Korrektur und selektivem Import.",
     "historyBtn": "Verlauf öffnen",
     "howItWorks": "So funktioniert es",
-    "step1": "Öffne Netflix, Amazon Prime Video oder deinen Jellyfin-Server und starte einen Film oder eine Serie.",
+    "step1": "Öffne Netflix, Prime Video oder deinen Jellyfin-Server und starte einen Film oder eine Serie.",
     "step2": "Das Add-on erkennt Titel, Staffel und Folge über den Player bzw. die Metadata-API des Dienstes.",
     "step3": "Es sucht den Titel über deine Watcharr-Instanz (TMDB-ID) und fügt ihn deiner Watchlist hinzu (<em>WATCHING</em>).",
     "step4Before": "Wenn ein Film/eine Folge bis zu ≥",
@@ -72,7 +72,7 @@
   },
   "popup": {
     "nowPlaying": "Aktuell auf {service}",
-    "noService": "Öffne Netflix, Amazon Prime Video oder Jellyfin und starte einen Film oder eine Serie – im Popup erscheint dann der Fortschritt.",
+    "noService": "Öffne Netflix, Prime Video oder Jellyfin und starte einen Film oder eine Serie – im Popup erscheint dann der Fortschritt.",
     "notConfigured": "Nicht konfiguriert.",
     "notConfiguredDetail": "Verbinde deine Watcharr-Instanz in den Einstellungen.",
     "scrobblingActive": "Scrobbeln aktiv",
@@ -98,7 +98,7 @@
   },
   "toolbar": {
     "openSettings": "Einstellungen öffnen",
-    "openService": "Netflix, Amazon Prime Video oder Jellyfin öffnen"
+    "openService": "Netflix, Prime Video oder Jellyfin öffnen"
   },
   "history": {
     "title": "Watcharr Scrobbler – Verlauf",
