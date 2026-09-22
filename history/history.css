@@ -340,28 +340,6 @@ body {
   color: var(--accent-2);
 }
 
-/* Service-specific note under the status bar (e.g. "log in with the same
-   account on Prime Video AND Amazon"). Deliberately quieter than a status
-   message: it is advice, not the result of an action. The bottom margin keeps
-   the first history row at the same distance as below the status bar. */
-.note {
-  margin: 10px 20px 14px;
-  padding: 10px 14px;
-  border-radius: 10px;
-  font-size: 13px;
-  line-height: 1.45;
-  background: rgba(148, 163, 184, 0.1);
-  border: 1px solid rgba(148, 163, 184, 0.3);
-  color: var(--text);
-}
-
-/* The lead-in ("Please note:") is set in a slightly stronger weight so the
-   advice is easy to spot without shouting. */
-.note strong {
-  color: var(--accent-2);
-  font-weight: 600;
-}
-
 /* Import result as a small popup above the fixed toolbar. */
 .status.popup {
   position: fixed;

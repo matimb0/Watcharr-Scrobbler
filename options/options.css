@@ -233,6 +233,19 @@ button.provider:disabled {
   font-size: 12px;
 }
 
+/* Prime Video note under "How it works": advice that belongs to one service,
+   so it gets a hairline instead of blending into the step list. */
+.hint.primevideo-hint {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.hint.primevideo-hint strong {
+  color: var(--accent-2);
+  font-weight: 600;
+}
+
 /* Buttons */
 .actions {
   display: flex;

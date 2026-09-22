@@ -58,22 +58,11 @@
       name: "Prime Video",
       urlTest: /(^|\.)primevideo\.com$/i,
       urlPattern: "*://*.primevideo.com/*",
-      // The Prime Video API is not only served from primevideo.com: Amazon
-      // picks the account's marketplace (e.g. amazon.de) and API host from the
-      // region. Which one applies is only known after the first request, so
-      // the known marketplaces are requested as a set.
-      //
-      // Deliberately NOT in the manifest: they are only used for
-      // extension-side fetches, and as page patterns they would make every
-      // Amazon tab look like a Prime Video tab. Covered by the optional host
-      // permission, so a runtime request is enough.
-      apiPatterns: [
-        "*://*.amazon.com/*",
-        "*://*.amazon.co.uk/*",
-        "*://*.amazon.de/*",
-        "*://*.amazon.co.jp/*",
-        "*://*.amazon.com.au/*",
-      ],
+      // The history and its metadata are fetched exclusively from
+      // primevideo.com (both atv-ps.primevideo.com and atv-ps-<region>.
+      // primevideo.com are covered by the pattern above), so the account's
+      // Amazon marketplace is neither requested nor needed – see
+      // content/primevideo/primevideo-history.js for why.
       contentScripts: [
         ...SHARED_CONTENT_SCRIPTS,
         "content/primevideo/primevideo-playback.js",
@@ -236,20 +225,10 @@
     return typeof pattern === "string" && pattern !== "" ? [pattern] : [];
   }
 
-  /** Page patterns of a service plus the hosts its API is fetched from
-   *  (`apiPatterns` – extension-side fetches, not tab detection). */
-  function permissionPatterns(svc, settings) {
-    const out = patterns(svc, settings);
-    for (const p of (svc && svc.apiPatterns) || []) {
-      if (typeof p === "string" && p !== "" && !out.includes(p)) out.push(p);
-    }
-    return out;
-  }
-
   /**
    * All origins the extension needs for `settings`, as match patterns: the
-   * fixed service hosts, the configured Jellyfin server, the service API hosts
-   * and the Watcharr instance.
+   * fixed service hosts, the configured Jellyfin server and the Watcharr
+   * instance.
    *
    * Callers use this both to check current access and to request it
    * (browser.permissions.request); only STATIC_HOSTS are in the manifest.
@@ -278,7 +257,7 @@
     if (!only) STATIC_HOSTS.forEach(add);
     for (const svc of list) {
       if (only && !only.has(svc.id)) continue;
-      permissionPatterns(svc, settings).forEach(add);
+      patterns(svc, settings).forEach(add);
     }
     add(originPattern(settings && settings.watcharrUrl));
     return origins;

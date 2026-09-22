@@ -61,9 +61,6 @@ const ERROR_KEYS = {
   // Host permissions are optional in Firefox: the manifest only requests them,
   // and without them a service tab cannot be read or injected into.
   host_permission_missing: "history.error.hostPermission",
-  // A fetch the browser blocked, with the blocked host as {origin}. Carries
-  // more information than the raw "NetworkError" fallback in describeError.
-  network_blocked: "history.error.networkBlockedOrigin",
   service_not_configured: "history.error.serviceNotConfigured",
   no_service_response: "history.error.noResponse",
   auth_failed: "history.error.authFailed",
@@ -133,13 +130,11 @@ async function applyLanguage(lang) {
   // so they follow a language change as well.
   updateViewMenu();
   updateSourceUI();
-  updateServiceNote();
 }
 
 const els = {
   reloadBtn: $("#reloadBtn"),
   statusBar: $("#statusBar"),
-  serviceNote: $("#serviceNote"),
   selectAllBtn: $("#selectAllBtn"),
   selectNoneBtn: $("#selectNoneBtn"),
   filterBox: $("#filterBox"),
@@ -182,12 +177,6 @@ let availableServices = [];
 // Settings this page was opened with (Jellyfin server, Watcharr URL). They
 // decide which host access has to be requested – see neededOrigins().
 let loadedSettings = null;
-// Hosts the browser blocked while loading, per service id. The set of hosts a
-// service needs is not always known up front: the Prime Video API, for example,
-// is served from the account's Amazon marketplace, which Amazon picks from the
-// region during the first request. Such a host is reported by the background
-// (see noteBlockedOrigin) and then requested on the next "Reload" click.
-const blockedOrigins = new Map();
 
 const TMDB_IMG = "https://image.tmdb.org/t/p/w185";
 
@@ -772,7 +761,6 @@ function setFileMode(on, name) {
   fileMode = !!on;
   fileName = fileMode ? name || fileName || "" : "";
   updateSourceUI();
-  updateServiceNote(); // the note belongs to a service, not to a file
 }
 
 /** Shows/hides the file-mode controls (back button, export availability). */
@@ -908,7 +896,6 @@ async function load() {
       return false;
     }
     if (!resp || !resp.ok) {
-      noteBlockedOrigin(resp); // the next "Reload" click asks for that host
       throw new Error(await describeError(resp, "history.loadingFailed"));
     }
     ok = true;
@@ -967,7 +954,6 @@ async function loadMore() {
       service: serviceId,
     });
     if (!resp || !resp.ok) {
-      noteBlockedOrigin(resp); // the next "Reload" click asks for that host
       throw new Error(await describeError(resp, "history.loadingFailed"));
     }
     if (gen !== loadGen) return; // a fresh load replaced this list – discard
@@ -977,7 +963,6 @@ async function loadMore() {
     allLoaded = !!resp.done;
     appendItems(newItems);
     if (resp.error) {
-      noteBlockedOrigin(resp);
       setStatus("error", await describeError(resp, "history.loadingFailed"));
     } else if (allLoaded) {
       clearStatus();
@@ -1570,7 +1555,6 @@ async function runExport() {
       return;
     }
     if (!resp || !resp.ok) {
-      noteBlockedOrigin(resp); // the next "Reload" click asks for that host
       throw new Error(await describeError(resp, "history.exportFailed"));
     }
     const rows = resp.rows || [];
@@ -1688,43 +1672,9 @@ window.addEventListener("scroll", () => {
   }
 });
 
-/** Advice that belongs to ONE service, as i18n key. Prime Video fetches its
- *  history through TWO sessions – the Prime Video site and the Amazon
- *  marketplace the account belongs to (see background/services.js) – so both
- *  have to be logged in with the same account. */
-const SERVICE_NOTES = {
-  primevideo: "history.primeVideoNote",
-};
-
-/** Shows the note of the service currently displayed (and hides it in file
- *  mode, where the history does not come from a service). */
-async function updateServiceNote() {
-  const el = els.serviceNote;
-  if (!el) return;
-  const key = fileMode ? null : SERVICE_NOTES[serviceId];
-  if (!key) {
-    el.classList.add("hidden");
-    el.replaceChildren();
-    el.dataset.note = "";
-    return;
-  }
-  // applyServiceHeader() runs on every reconciliation – rebuild the text only
-  // when the note or the language really changed.
-  const stamp = key + "|" + currentLanguage;
-  if (el.dataset.note === stamp) return;
-  el.dataset.note = stamp;
-  const lead = document.createElement("strong");
-  lead.textContent = await t("history.noteLead");
-  // Plain DOM nodes instead of HTML: the text is ours, but parameters never
-  // pass through an HTML parser.
-  el.replaceChildren(lead, document.createTextNode(" " + (await t(key))));
-  el.classList.remove("hidden");
-}
-
 /** Sets the header title/subtitle to the selected service (or to the loaded
  *  file while the page is in file-import mode). */
 async function applyServiceHeader() {
-  await updateServiceNote();
   if (fileMode) {
     if (els.pageTitle) els.pageTitle.textContent = await t("history.fileTitle");
     if (els.pageSubtitle) {
@@ -1998,8 +1948,8 @@ async function showNoService() {
 
 /**
  * Host access the background needs to load the history of the CURRENT service:
- * the patterns of that one service (plus its `apiPatterns`) and the user's
- * Watcharr instance – see WatcharrServices.permissionOrigins.
+ * the patterns of that one service and the user's Watcharr instance – see
+ * WatcharrServices.permissionOrigins.
  *
  * Only the current service is asked for: the browser grants all requested
  * permissions or none, so a single foreign origin would block the whole
@@ -2011,16 +1961,9 @@ function neededOrigins() {
 }
 
 /** Match patterns that have to be granted for ONE service: its hosts plus the
- *  Watcharr instance, and every host the browser blocked for that service
- *  before (see noteBlockedOrigin). */
+ *  Watcharr instance. */
 function originsForService(id) {
-  const origins = WatcharrServices.permissionOrigins(loadedSettings || {}, [
-    id,
-  ]);
-  for (const pattern of blockedOrigins.get(id) || []) {
-    if (!origins.includes(pattern)) origins.push(pattern);
-  }
-  return origins;
+  return WatcharrServices.permissionOrigins(loadedSettings || {}, [id]);
 }
 
 /** Display name of a service (default: the one whose history is shown here).
@@ -2062,19 +2005,6 @@ async function missingAccessServiceNames() {
     .filter((s) => WatcharrServices.hasHistory(s))
     .map((s) => s.name)
     .join(" / ");
-}
-
-/** Remembers the host the browser blocked for the current service. The
- *  background reports it as {origin} on a blocked fetch, which is exactly what
- *  the next "Reload" click asks for. */
-function noteBlockedOrigin(resp) {
-  const origin = resp && resp.errorParams && resp.errorParams.origin;
-  if (typeof origin !== "string" || !/^(https?|\*):\/\//.test(origin)) return;
-  const list = blockedOrigins.get(serviceId) || [];
-  if (list.includes(origin)) return;
-  list.push(origin);
-  blockedOrigins.set(serviceId, list);
-  dbg("blocked origin noted", serviceId, origin);
 }
 
 /** Refreshes the settings this page works with (Watcharr URL, Jellyfin server).

@@ -20,8 +20,8 @@ integrated as services.
   it is marked as watched in Watcharr (**FINISHED**).
 - For series, the individual **episode** is marked as watched – Watcharr
   automatically updates the series status (“Automate Show Statuses”).
-- **History page:** Import your previous viewing history (Netflix, Amazon
-  Prime Video or Jellyfin) in a controlled way – with comparison, match
+- **History page:** Import your previous viewing history (Netflix, Prime
+  Video or Jellyfin) in a controlled way – with comparison, match
   correction, and selective import (movies as watched series episodes
   individually).
 
@@ -77,6 +77,9 @@ integrated as services.
 6. Open Netflix, Prime Video or your Jellyfin server and get started 🍿
 
 You can see the status and progress at any time in the **Popup**.
+
+> **Prime Video:** Reachable exclusively via **primevideo.com** – the
+> account's Amazon marketplace is not used.
 
 <br>
 

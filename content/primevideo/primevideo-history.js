@@ -1,10 +1,15 @@
 /*
  * Amazon Prime Video – viewing history for the history page.
  *
- * Amazon serves the history from the account's marketplace host, which is only
- * known after asking the "GetAppStartupConfig" endpoint – and the extension
- * fetches it through the BACKGROUND script, because the content script's own
- * fetch is blocked by the page CORS for those cross-origin API hosts.
+ * Everything runs on primevideo.com: "GetAppStartupConfig" for the region, the
+ * settings API for the history itself and the CDP catalog for the metadata of
+ * each item. The account's Amazon marketplace host is deliberately NEVER used:
+ * the selected profile is stored per domain, so a request there would return
+ * that domain's own profile (usually the default one) instead of the profile
+ * the user picked on primevideo.com.
+ *
+ * The requests go through the BACKGROUND script, because the content script's
+ * own fetch to the API hosts is blocked by the page CORS.
  *
  * Endpoints, headers and the recursion over `nextToken` mirror the Amazon
  * Prime implementation of Universal Trakt Scrobbler.
@@ -25,9 +30,10 @@
     active: false,
     failed: false,
     error: null,
+    // Fixed primevideo.com hosts (see the file header) – the region only
+    // refines `apiUrl` to its regional sibling, e.g. atv-ps-eu.primevideo.com.
     hostUrl: "https://www.primevideo.com",
     apiUrl: "https://atv-ps.primevideo.com",
-    profileUrl: null,
     historyUrl: null,
     itemUrl: null,
   };
@@ -42,17 +48,7 @@
       if (resp && resp.status) {
         throw new Error("Amazon API request failed (HTTP " + resp.status + ")");
       }
-      const err = new Error(
-        (resp && resp.error) || "Amazon API request failed.",
-      );
-      // The background names the host it was not allowed to reach. Carried as
-      // a stable code + param so the history page can translate it AND request
-      // exactly that origin on the next "Reload" click.
-      if (resp && resp.blockedOrigin) {
-        err.userCode = "network_blocked";
-        err.userParams = { origin: resp.blockedOrigin };
-      }
-      throw err;
+      throw new Error((resp && resp.error) || "Amazon API request failed.");
     }
     try {
       return JSON.parse(resp.text);
@@ -62,8 +58,8 @@
   }
 
   /**
-   * Determines the account's marketplace/region and the matching API hosts
-   * (GetAppStartupConfig -> homeRegion), exactly like UTS does.
+   * Reads the account's region (`GetAppStartupConfig` -> `homeRegion`) and
+   * builds the primevideo.com API URLs for it.
    */
   async function ensureApi() {
     if (api.active) return;
@@ -78,30 +74,28 @@
         DEVICE_TYPE_ID +
         "&firmware=1&gascEnabled=false&version=1";
       const config = await amazonJson(configUrl);
+      // Only the region is taken from the answer: the marketplace it also
+      // reports is intentionally ignored (see the file header).
       const region = (
         (config.customerConfig && config.customerConfig.homeRegion) ||
         ""
       ).toLowerCase();
-      const host =
-        (config.territoryConfig &&
-          config.territoryConfig.defaultVideoWebsite) ||
-        api.hostUrl;
 
-      api.hostUrl = host;
-      api.apiUrl = host
+      api.hostUrl = "https://www.primevideo.com";
+      api.apiUrl = api.hostUrl
         .replace("www.", "")
         .replace(
           "//",
           "//atv-ps" + (region === "na" ? "" : "-" + region) + ".",
         );
 
-      const apiPath = /https:\/\/(?:www\.)?amazon\./.test(host)
-        ? "/gp/video/api"
-        : "/region/" + region + "/api";
+      // primevideo.com serves its settings API under /region/<region>/api.
+      const apiPath = "/region/" + region + "/api";
 
-      api.profileUrl = host + apiPath + "/getProfiles";
       api.historyUrl =
-        host + apiPath + "/getWatchHistorySettingsPage?widgetArgs=%7B{args}%7D";
+        api.hostUrl +
+        apiPath +
+        "/getWatchHistorySettingsPage?widgetArgs=%7B{args}%7D";
       api.itemUrl =
         api.apiUrl +
         "/cdp/catalog/GetPlaybackResources?asin={id}&consumptionType=Streaming&desiredResources=CatalogMetadata&deviceID=" +
@@ -118,10 +112,6 @@
           (err.message || String(err)) +
           ")",
       );
-      // Keep the stable code/params of the original failure (a blocked host is
-      // actionable in the UI – see amazonJson).
-      api.error.userCode = (err && err.userCode) || null;
-      api.error.userParams = (err && err.userParams) || null;
       throw api.error;
     }
   }
