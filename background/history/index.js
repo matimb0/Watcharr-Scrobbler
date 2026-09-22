@@ -95,18 +95,34 @@ const WatcharrHistory = (() => {
       isTv,
       title: entry.title,
       year: entry.year || null,
+      // Release year AS REPORTED BY THE SERVICE (display only). It falls back to
+      // `year` when the service reports one and it is already the search year
+      // (Netflix/Jellyfin movies) – never derived from the Watcharr match.
+      providerYear:
+        entry.providerYear != null ? entry.providerYear : entry.year || null,
       date: toIsoDateString(entry.date),
       season: isTv && entry.season != null ? entry.season : null,
       episode: isTv && entry.episode != null ? entry.episode : null,
+      // Provider-side data. It is shown AS-IS on the left of the comparison
+      // and is never derived from the Watcharr match (see
+      // history/history.js) – title/year/episode of the row belong to the
+      // service that reported them.
+      episodeTitle: entry.episodeTitle || null,
+      providerId: entry.providerId != null ? String(entry.providerId) : null,
+      providerType: entry.providerType || null,
       // TMDB data known in advance (imported file): the row is matched on
       // exactly this TMDB id instead of guessing by title/year.
       tmdbHint: entry.tmdbHint || null,
       match: null,
       matchError: null,
       matchErrorCode: null,
+      // Name of the matched episode (TMDB, through Watcharr) – only for
+      // episode rows and independent of their watched status.
+      matchEpisodeName: null,
       episodeStatus: null, // null | "FINISHED" | "WATCHING" | …
       episodeStatusKnown: false, // false = unknown (lookup failed / no episode)
       episodeDateMatched: false, // FINISHED at exactly this date+time
+      watcharrDate: null, // recorded watch date of that exact match
       selected: false,
       status: "pending",
       error: null,
@@ -122,15 +138,21 @@ const WatcharrHistory = (() => {
       isTv: item.isTv,
       title: item.title,
       year: item.year,
+      providerYear: item.providerYear,
       date: item.date,
       season: item.season,
       episode: item.episode,
+      episodeTitle: item.episodeTitle,
+      providerId: item.providerId,
+      providerType: item.providerType,
       match: item.match,
       matchError: item.matchError,
       matchErrorCode: item.matchErrorCode || null,
+      matchEpisodeName: item.matchEpisodeName,
       episodeStatus: item.episodeStatus,
       episodeStatusKnown: item.episodeStatusKnown,
       episodeDateMatched: item.episodeDateMatched,
+      watcharrDate: item.watcharrDate,
       selected: item.selected,
       status: item.status,
       error: item.error,
@@ -182,9 +204,13 @@ const WatcharrHistory = (() => {
           : "TMDB ID " + item.tmdbHint.tmdbId + " not found in Watcharr";
         item.matchErrorCode = item.match ? null : "tmdb_not_found";
       } else {
-        const results = await matcher.searchWatcharr(item.title, item.year);
-        item.match = matcher.resultToMatch(
-          matcher.pickBest(results, item.title, item.isTv),
+        // Title/year match through the typed Watcharr search (see
+        // background/history/matcher.js – a year only filters in typed
+        // searches, so "multi" is not used for the first attempt).
+        item.match = await matcher.searchWatcharr(
+          item.title,
+          item.year,
+          item.isTv,
         );
         item.matchError = item.match ? null : "no match in Watcharr";
         item.matchErrorCode = item.match ? null : "no_match";

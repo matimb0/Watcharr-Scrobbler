@@ -53,6 +53,11 @@
   ];
   const FILE_SEASON_KEYS = ["season", "seasonnumber", "seasonindex"];
   const FILE_EPISODE_KEYS = ["episode", "episodenumber", "episodeindex"];
+  const FILE_EPISODE_TITLE_KEYS = [
+    "episodetitle",
+    "episodename",
+    "episodenamefull",
+  ];
   const FILE_DATE_KEYS = [
     "watchedat",
     "watcheddate",
@@ -179,6 +184,10 @@
       year,
       season: type === "tv" ? season : null,
       episode: type === "tv" ? episode : null,
+      episodeTitle:
+        type === "tv"
+          ? toTrimmedString(pickField(o, FILE_EPISODE_TITLE_KEYS)) || null
+          : null,
       watchedAt: normalizeFileDate(pickField(o, FILE_DATE_KEYS)),
       tmdbId,
       tmdbTitle: tmdbTitle || null,
@@ -305,6 +314,9 @@
       date: row.watchedAt,
       season: isTv ? row.season : null,
       episode: isTv ? row.episode : null,
+      // Extra column of the file (provider episode title) – shown on the left
+      // side of the comparison like the service data.
+      episodeTitle: isTv ? row.episodeTitle || null : null,
       tmdbHint: hint,
     };
   }

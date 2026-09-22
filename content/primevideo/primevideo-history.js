@@ -131,6 +131,18 @@
 
   const metadataCache = new Map(); // ASIN -> Promise<metadata|null>
 
+  /** `splitTitleYear` of the shared helpers (Prime Video titles carry the year). */
+  const splitTitleYear = WatcharrContentUtil.splitTitleYear;
+
+  /** First usable release year of the given values (or null). */
+  function firstYear(...values) {
+    for (const v of values) {
+      const year = parseInt(v, 10);
+      if (Number.isFinite(year) && year > 0) return year;
+    }
+    return null;
+  }
+
   /**
    * Catalog metadata of one ASIN. Amazon only exposes it per item, so every
    * history entry costs one request (see mapConcurrent).
@@ -154,11 +166,31 @@
             : [];
         const season = ancestors[0] && ancestors[0].catalog;
         const show = ancestors[1] && ancestors[1].catalog;
+        // Amazon appends the release year to its titles ("Road House (2024)")
+        // and the catalog metadata has no year field at all. Both the title
+        // AND the year are needed: the TMDB search finds nothing for a title
+        // that carries the year, but needs it to pick the right same-titled
+        // entry.
+        const versionTag = / \[[\w.]+\/[\w.]+\]$/; // e.g. "Movie [dubbed/de]"
+        const item = splitTitleYear(
+          (catalog.title || "").replace(versionTag, ""),
+        );
+        const showInfo = splitTitleYear(
+          show && show.title ? show.title.replace(versionTag, "") : "",
+        );
+        const year = firstYear(
+          catalog.releaseYear,
+          catalog.year,
+          item.year,
+          show && show.releaseYear,
+          show && show.year,
+          showInfo.year,
+        );
         return {
           id: catalog.id,
           entityType: catalog.entityType || "",
-          // Some media append a version tag, e.g. "Movie [dubbed/de]".
-          title: (catalog.title || "").replace(/ \[[\w.]+\/[\w.]+\]$/, ""),
+          title: item.title,
+          year,
           episodeNumber:
             typeof catalog.episodeNumber === "number"
               ? catalog.episodeNumber
@@ -167,10 +199,7 @@
             season && typeof season.seasonNumber === "number"
               ? season.seasonNumber
               : null,
-          showTitle:
-            show && show.title
-              ? show.title.replace(/ \[[\w.]+\/[\w.]+\]$/, "")
-              : null,
+          showTitle: showInfo.title || null,
         };
       } catch (_) {
         return null;
@@ -247,18 +276,29 @@
         date: iso,
         isTv: true,
         title: meta.showTitle || meta.title,
-        year: null,
+        year: meta.year,
+        providerYear: meta.year,
         season: meta.seasonNumber,
         episode: meta.episodeNumber,
+        // `meta.title` is the EPISODE title for TV entries (the series title is
+        // `showTitle`).
+        episodeTitle: meta.title || null,
+        // Amazon's own identifiers/type for this view.
+        providerId: meta.id || null,
+        providerType: meta.entityType || null,
       };
     }
     return {
       date: iso,
       isTv: false,
       title: meta.title,
-      year: null,
+      year: meta.year,
+      providerYear: meta.year,
       season: null,
       episode: null,
+      episodeTitle: null,
+      providerId: meta.id || null,
+      providerType: meta.entityType || null,
     };
   }
 

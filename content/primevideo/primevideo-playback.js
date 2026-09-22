@@ -44,8 +44,12 @@
     const scope = player || document;
 
     const titleEl = scope.querySelector(TITLE_SELECTOR);
-    const title = titleEl ? (titleEl.textContent || "").trim() : "";
-    if (!title) return null;
+    const rawTitle = titleEl ? (titleEl.textContent || "").trim() : "";
+    if (!rawTitle) return null;
+    // The player titles the entry with the release year ("Road House (2024)"),
+    // and the TMDB search finds nothing for that – the year is used as the
+    // entry's year instead (see content/shared/util.js).
+    const { title, year } = WatcharrContentUtil.splitTitleYear(rawTitle);
 
     const subtitleEl = scope.querySelector(SUBTITLE_SELECTOR);
     const subtitle = subtitleEl ? (subtitleEl.textContent || "").trim() : "";
@@ -64,7 +68,7 @@
     return {
       type: "movie",
       title,
-      year: null,
+      year,
       seasonNumber: null,
       episodeNumber: null,
       episodeTitle: null,

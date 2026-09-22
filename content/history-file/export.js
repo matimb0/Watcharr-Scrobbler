@@ -35,6 +35,7 @@
     "year",
     "season",
     "episode",
+    "episodeTitle",
     "watchedAt",
     "tmdbId",
     "tmdbType",
@@ -56,9 +57,18 @@
       serviceId: svc ? svc.id : "",
       title: entry.title || "",
       type: isTv ? "tv" : "movie",
-      year: entry.year != null ? entry.year : null,
+      // The year the SERVICE reported – this column is provider data, so the
+      // display year wins over the (possibly empty) search year.
+      year:
+        entry.providerYear != null
+          ? entry.providerYear
+          : entry.year != null
+            ? entry.year
+            : null,
       season: isTv && entry.season != null ? Number(entry.season) : null,
       episode: isTv && entry.episode != null ? Number(entry.episode) : null,
+      // Provider-side extra (title of the episode, when the service knows it).
+      episodeTitle: entry.episodeTitle || null,
       watchedAt: toIsoDateString(entry.date),
       // Filled in by `enrichExportRows()` (TMDB lookup through Watcharr).
       tmdbId: null,

@@ -115,17 +115,20 @@
       knownTmdbId = await lookupSeriesTmdb(meta.seriesId);
     }
 
-    const queries = meta.year
-      ? [meta.title + " year:" + meta.year, meta.title]
-      : [meta.title];
-
     let best = null;
-    for (const query of queries) {
+    // Typed search + year filter first (see Api.buildQueries: a "multi" search
+    // ignores the year, which would match the wrong same-titled medium).
+    for (const { query, searchType } of Api.buildQueries(
+      meta.title,
+      meta.year,
+      meta.type,
+    )) {
       let results = [];
       try {
         const resp = await browser.runtime.sendMessage({
           type: "watcharr:search",
           query,
+          searchType,
         });
         if (!resp || !resp.ok) continue;
         results = (resp.data && resp.data.results) || [];

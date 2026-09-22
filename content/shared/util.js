@@ -36,5 +36,34 @@
     return "movie|" + meta.title.toLowerCase().trim();
   }
 
-  globalThis.WatcharrContentUtil = { createThrottle, identityKey };
+  /**
+   * Splits a release year that a service appended to a title:
+   * "Road House (2024)" -> { title: "Road House", year: 2024 }.
+   *
+   * Prime Video titles its entries with the year in parentheses (its catalog
+   * metadata has no year field at all), and such a title finds NOTHING in the
+   * TMDB search – the year must be removed from the query and used as the year
+   * instead (the search then returns the same-titled entries to pick from).
+   * "[2024]", a leading separator and stray spaces are handled as well, but
+   * only when a real title remains.
+   */
+  function splitTitleYear(title) {
+    const raw = String(title == null ? "" : title).trim();
+    // Title followed by the year in brackets – "Road House (2024)",
+    // "Road House [2024]", "Road House (2024) " (the separator is optional).
+    const m = raw.match(/^(.*?)[\s\-–—]*[([ ](\d{4})[)\]]\s*$/);
+    if (!m) return { title: raw, year: null };
+    const name = m[1].trim();
+    const year = parseInt(m[2], 10);
+    if (!name || !(year >= 1800 && year <= 2200)) {
+      return { title: raw, year: null };
+    }
+    return { title: name, year };
+  }
+
+  globalThis.WatcharrContentUtil = {
+    createThrottle,
+    identityKey,
+    splitTitleYear,
+  };
 })();

@@ -124,7 +124,11 @@
     return date ? date.toISOString() : null;
   }
 
-  /** Adds year (and for series season/episode) to raw history entries. */
+  /**
+   * Adds year (and for series season/episode) to raw history entries. The extra
+   * provider fields (episode title, Netflix video id, raw media type) are
+   * displayed as-is on the provider side of the comparison page.
+   */
   async function enrich(rawItems) {
     const enriched = [];
     for (const raw of rawItems) {
@@ -137,6 +141,7 @@
       if (isTv) {
         let season = null;
         let episode = null;
+        let episodeTitle = null;
         if (video && video.type === "show") {
           const seasons = Array.isArray(video.seasons) ? video.seasons : [];
           outer: for (const s of seasons) {
@@ -145,6 +150,7 @@
               if (String(ep.id) === String(raw.movieID)) {
                 season = typeof s.seq === "number" ? s.seq : null;
                 episode = typeof ep.seq === "number" ? ep.seq : null;
+                episodeTitle = ep.title || null;
                 break outer;
               }
             }
@@ -157,6 +163,10 @@
           year: video ? video.year : null,
           season,
           episode,
+          episodeTitle,
+          // Netflix' own identifiers (the view is the episode's video id).
+          providerId: String(raw.movieID),
+          providerType: (video && video.type) || "show",
         });
       } else {
         enriched.push({
@@ -166,6 +176,9 @@
           year: video ? video.year : null,
           season: null,
           episode: null,
+          episodeTitle: null,
+          providerId: String(raw.movieID),
+          providerType: (video && video.type) || "movie",
         });
       }
     }

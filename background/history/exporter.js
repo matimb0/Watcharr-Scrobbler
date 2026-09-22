@@ -27,16 +27,18 @@
     if (cache.has(key)) return cache.get(key);
 
     const pending = (async () => {
-      // Same two-step query as the history matching: with the year first, then
-      // a plain title search as fallback.
-      const queries = row.year
-        ? [row.title + " year:" + row.year, row.title]
-        : [row.title];
+      // Same query order as the history matching (typed + year filter first,
+      // see background/history/matcher.js).
+      const isTv = row.type === "tv";
 
-      for (const query of queries) {
+      for (const { query, type } of matcher.buildQueries(
+        row.title,
+        row.year,
+        isTv,
+      )) {
         let results = [];
         try {
-          const data = await client.search(query, "multi");
+          const data = await client.search(query, type);
           results = (data && data.results) || [];
         } catch (err) {
           // A single failed lookup must not abort the whole export – the row
@@ -45,7 +47,7 @@
           return null;
         }
         const match = matcher.resultToMatch(
-          matcher.pickBest(results, row.title, row.type === "tv"),
+          matcher.pickBest(results, row.title, isTv, row.year),
         );
         if (match) return match;
       }

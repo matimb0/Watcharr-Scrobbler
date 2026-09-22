@@ -22,9 +22,19 @@
         date,
         isTv: true,
         title,
+        // Jellyfin reports `ProductionYear` for an episode as the EPISODE's own
+        // year, not the series year – and there is no series year on this item.
+        // Both the TMDB lookup and the row's year therefore stay empty for
+        // episodes (showing the episode year under "Series" would be wrong and
+        // would trip the year-mismatch warning against the series year).
         year: null,
+        providerYear: null,
         season: WatcharrJellyfinItems.numberOrNull(item.ParentIndexNumber),
         episode: WatcharrJellyfinItems.numberOrNull(item.IndexNumber),
+        // Jellyfin's own name of the episode and its server-side identifiers.
+        episodeTitle: item.Name || null,
+        providerId: item.Id ? String(item.Id) : null,
+        providerType: item.Type,
       };
     }
 
@@ -37,6 +47,9 @@
         year: WatcharrJellyfinItems.numberOrNull(item.ProductionYear),
         season: null,
         episode: null,
+        episodeTitle: null,
+        providerId: item.Id ? String(item.Id) : null,
+        providerType: item.Type,
       };
     }
 

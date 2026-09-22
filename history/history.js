@@ -89,6 +89,16 @@ function searchTypeLabel(type) {
   return (SEARCH_TYPE_KEYS[type] && ts(SEARCH_TYPE_KEYS[type])) || type;
 }
 
+/** TMDB page of a search result ("movie" | "tv" | "person"), or null. */
+function tmdbUrl(result) {
+  const id = Number(result && result.ids && result.ids.tmdb);
+  if (!Number.isInteger(id) || id <= 0) return null;
+  const kind = { tmdb_movie: "movie", tmdb_tv: "tv", tmdb_person: "person" }[
+    result.type
+  ];
+  return kind ? "https://www.themoviedb.org/" + kind + "/" + id : null;
+}
+
 /** Full translated text for an error that may carry { errorCode, errorParams }
  *  (a background response or a locally thrown Error). `fallbackKey` is used
  *  when nothing usable is available. */
@@ -314,11 +324,7 @@ function episodeLabel(it) {
 function isTransferred(it) {
   if (!it || !it.match) return false;
   // Successfully imported in this session.
-  if (
-    it.status === "imported" ||
-    it.status === "updated" ||
-    it.status === "exists"
-  ) {
+  if (it.status === "imported" || it.status === "updated") {
     return true;
   }
   // Failed/skipped import remains editable (e.g., retry import).
@@ -344,136 +350,152 @@ function isTransferred(it) {
   return true;
 }
 
-function matchBadge(it) {
-  if (!it.match) {
-    return (
-      '<span class="badge nomatch">' +
-      escapeHtml(ts("history.badgeNoMatch")) +
-      "</span>"
-    );
-  }
-  if (
-    it.isTv &&
-    it.season != null &&
-    it.episode != null &&
-    it.episodeStatusKnown
-  ) {
-    // The episode itself (S1E2) is shown on the Watcharr side of the row, so
-    // the badge only carries the status of this episode.
-    if (exactMatch) {
-      // Exact mode: only the identical watch (date AND time) counts.
-      if (episodeRecordedAtDate(it)) {
-        // Recorded in Watcharr at the exact same date+time.
-        return (
-          '<span class="badge inwatcharr">' +
-          escapeHtml(ts("history.badgeWatched")) +
-          "</span>"
-        );
-      }
-      // Episode is already FINISHED in Watcharr, but not with THIS date.
-      // Importing therefore simply adds another watched date.
-      if (episodeFinished(it)) {
-        return (
-          '<span class="badge readd" title="' +
-          escapeHtml(ts("history.badgeReaddTitle")) +
-          '">' +
-          escapeHtml(ts("history.badgeReadd")) +
-          "</span>"
-        );
-      }
-      if (it.match.watchedId) {
-        // Series in Watcharr, but this exact watch (date+time) is not recorded.
-        return (
-          '<span class="badge missing">' +
-          escapeHtml(ts("history.badgeMissing")) +
-          "</span>"
-        );
-      }
-    } else {
-      // Rough mode: only check whether the episode is already watched.
-      if (episodeSeen(it.episodeStatus)) {
-        return (
-          '<span class="badge inwatcharr">' +
-          escapeHtml(ts("history.badgeWatched")) +
-          "</span>"
-        );
-      }
-      if (it.match.watchedId) {
-        return (
-          '<span class="badge missing">' +
-          escapeHtml(ts("history.badgeMissing")) +
-          "</span>"
-        );
-      }
-    }
-  }
-  if (it.match.watchedId) {
-    return it.isTv
-      ? '<span class="badge inwatcharr">' +
-          escapeHtml(ts("history.badgeSeriesInWatcharr")) +
-          "</span>"
-      : '<span class="badge inwatcharr">' +
-          escapeHtml(ts("history.badgeInWatcharr")) +
-          "</span>";
-  }
+/** One badge (`cls` picks the color: ok | add | readd | warn | problem).
+ *  `title` adds an optional tooltip with a short explanation. */
+function badge(cls, text, title) {
   return (
-    '<span class="badge matched">' +
-    escapeHtml(ts("history.badgeMatched")) +
+    '<span class="badge ' +
+    cls +
+    '"' +
+    (title ? ' title="' + escapeHtml(title) + '"' : "") +
+    ">" +
+    escapeHtml(text) +
     "</span>"
   );
 }
 
-function statusBadge(it) {
+/**
+ * Result of an import run ("Import selected"). It REPLACES the row status
+ * afterwards – the import result is the newest state of the row.
+ */
+function importBadge(it) {
   const map = {
-    imported:
-      '<span class="badge imported">' +
-      escapeHtml(ts("history.statusImported")) +
-      "</span>",
-    updated:
-      '<span class="badge imported">' +
-      escapeHtml(ts("history.statusUpdated")) +
-      "</span>",
-    error:
-      '<span class="badge error">' +
-      escapeHtml(ts("history.statusError")) +
-      "</span>",
-    skipped:
-      '<span class="badge skipped">' +
-      escapeHtml(ts("history.statusSkipped")) +
-      "</span>",
-    exists:
-      '<span class="badge exists">' +
-      escapeHtml(ts("history.statusExists")) +
-      "</span>",
+    imported: ["imported", "history.statusImported"],
+    updated: ["imported", "history.statusUpdated"],
+    skipped: ["warn", "history.statusSkipped"],
+    error: ["error", "history.statusError"],
   };
-  return it.status && map[it.status] ? map[it.status] : "";
+  const entry = it.status && map[it.status];
+  return entry ? badge(entry[0], ts(entry[1])) : "";
 }
 
-function formatDate(iso) {
+/**
+ * THE status of a row: exactly one badge saying what happens to this watch.
+ * Deliberately kept simple – the technical difference between "the series is
+ * not in Watcharr yet" and "only this episode is not recorded yet" makes no
+ * difference for the user, both mean the watch still gets added:
+ *
+ *   already recorded          -> green  (nothing to do)
+ *   watched, but not this date-> teal   (only this watch date gets added)
+ *   anything else             -> blue   (the watch gets added)
+ *   nothing matched           -> red    (must be corrected by hand)
+ */
+function rowBadge(it) {
+  const imported = importBadge(it);
+  if (imported) return imported;
+  if (!it.match) return badge("problem", ts("history.badgeNoMatch"));
+  // Already watched, but this exact date is not recorded -> the import adds
+  // the date instead of the watch itself.
+  if (
+    exactMatch &&
+    it.isTv &&
+    it.season != null &&
+    it.episode != null &&
+    it.episodeStatusKnown &&
+    episodeFinished(it) &&
+    !episodeRecordedAtDate(it)
+  ) {
+    return badge("readd", ts("history.badgeReadd"));
+  }
+  return isTransferred(it)
+    ? badge("ok", ts("history.badgeRecorded"))
+    : badge("add", ts("history.badgeWillAdd"));
+}
+
+/**
+ * Yellow hints about the QUALITY of the match (next to the status badge): the
+ * match had to be guessed, or the matched entry is from another year. Both
+ * carry a tooltip explaining what exactly has to be checked.
+ */
+function matchWarnings(it) {
+  const out = [];
+  if (matchAmbiguous(it)) {
+    out.push(
+      badge("warn", ts("history.badgeCheck"), ts("history.badgeCheckTitle")),
+    );
+  }
+  if (yearMismatch(it)) {
+    out.push(
+      badge(
+        "warn",
+        ts("history.badgeYearMismatch", { matchYear: it.match.year }),
+        ts("history.badgeYearMismatchTitle", {
+          providerYear: it.providerYear,
+          matchYear: it.match.year,
+        }),
+      ),
+    );
+  }
+  return out.join("");
+}
+
+/** Locale tag for date/time formatting (follows the UI language). */
+function localeTag() {
+  return currentLanguage === "de"
+    ? "de-DE"
+    : currentLanguage === "fr"
+      ? "fr-FR"
+      : currentLanguage === "es"
+        ? "es-ES"
+        : "en-US";
+}
+
+/** Date AND time: the provider reports the exact watch time, and the exact
+ *  matching mode compares date + time, so both belong on the provider side. */
+function formatDateTime(iso) {
   if (!iso) return "";
   const d = new Date(iso);
   if (isNaN(d.getTime())) return "";
-  const localeTag =
-    currentLanguage === "de"
-      ? "de-DE"
-      : currentLanguage === "fr"
-        ? "fr-FR"
-        : "en-US";
-  return d.toLocaleDateString(localeTag);
+  return (
+    d.toLocaleDateString(localeTag()) +
+    " " +
+    d.toLocaleTimeString(localeTag(), { hour: "2-digit", minute: "2-digit" })
+  );
 }
 
-function netflixMeta(it) {
+/**
+ * PROVIDER side of a row: strictly what the service reported. It never reads
+ * `it.match`, so correcting/changing the Watcharr match cannot change the left
+ * side (title, year, episode and date stay the service's own data).
+ */
+function providerMeta(it) {
   const parts = [
     it.isTv ? ts("history.metadataSeries") : ts("history.metadataMovie"),
   ];
-  if (it.isTv && it.season != null && it.episode != null) {
-    parts.push("S" + it.season + "E" + it.episode);
-  }
-  const date = formatDate(it.date);
-  if (date) parts.push(ts("history.metadataOn", { date }));
-  const year = it.match && it.match.year ? it.match.year : it.year;
-  if (year) parts.push(year);
+  if (it.providerYear) parts.push(String(it.providerYear));
+  const at = formatDateTime(it.date);
+  if (at) parts.push(ts("history.metadataOn", { date: at }));
   return parts.join(" · ");
+}
+
+/** Episode line of the provider side: "S1E2 · Episode title" (whichever part
+ *  the service knows). */
+function providerEpisode(it) {
+  return [episodeLabel(it), it.episodeTitle].filter((p) => !!p).join(" · ");
+}
+
+/** The match had to be guessed (several same-titled entries, no year known).
+ *  Shown on the Watcharr side as a hint to verify the match by hand. */
+function matchAmbiguous(it) {
+  return !!(it.match && it.match.ambiguous) && !yearMismatch(it);
+}
+
+/** Year of the provider entry and of the matched Watcharr entry differ.
+ *  Shown on the Watcharr side so a same-titled medium from another year is
+ *  visible instead of silently imported. */
+function yearMismatch(it) {
+  if (!it.match || !it.match.year || !it.providerYear) return false;
+  return String(it.providerYear) !== String(it.match.year);
 }
 
 function rowHtml(it) {
@@ -486,8 +508,10 @@ function rowHtml(it) {
       : '<div class="poster ph">—</div>';
   const matchName = it.match ? it.match.name || it.title : "—";
   // Episode rows: the concrete episode belongs on the Watcharr side too, so
-  // the comparison shows WHICH episode of the matched series is meant.
+  // the comparison shows WHICH episode of the matched series is meant (with the
+  // TMDB episode name, when Watcharr knows the season).
   const epLabel = episodeLabel(it);
+  const matchEp = [epLabel, it.matchEpisodeName].filter((p) => !!p).join(" · ");
   const matchMeta = it.match
     ? "TMDB " +
       it.match.tmdbId +
@@ -496,7 +520,18 @@ function rowHtml(it) {
         : " · " + ts("history.metadataSeries")) +
       (it.match.year ? " · " + it.match.year : "")
     : rowErrorText(it, true) || "—";
+  // Exact matching mode: the Watcharr side ALWAYS shows a watch date – the one
+  // Watcharr already holds for this watch, or, when the watch (respectively just
+  // this date) is not recorded yet, the date that is stored on import (the
+  // provider's own date). Rough mode does not compare dates, so it shows none.
+  const recordedDate = exactMatch ? it.watcharrDate : null;
+  const pendingDate = exactMatch && !recordedDate && it.date ? it.date : null;
+  const matchDateValue = recordedDate || pendingDate;
+  const matchDate = matchDateValue
+    ? ts("history.metadataOn", { date: formatDateTime(matchDateValue) })
+    : "";
 
+  const providerEp = providerEpisode(it);
   const transferred = isTransferred(it);
   return (
     '<div class="row' +
@@ -508,12 +543,15 @@ function rowHtml(it) {
     (it.selected ? "checked" : "") +
     (transferred ? " disabled" : "") +
     " /></label>" +
-    '<div class="netflix">' +
+    '<div class="provider">' +
     '<div class="name">' +
     escapeHtml(it.title) +
     "</div>" +
+    (providerEp
+      ? '<div class="episode">' + escapeHtml(providerEp) + "</div>"
+      : "") +
     '<div class="meta">' +
-    netflixMeta(it) +
+    escapeHtml(providerMeta(it)) +
     "</div>" +
     "</div>" +
     '<div class="arrow">→</div>' +
@@ -523,13 +561,17 @@ function rowHtml(it) {
     '<div class="name">' +
     escapeHtml(matchName) +
     "</div>" +
-    (epLabel ? '<div class="episode">' + escapeHtml(epLabel) + "</div>" : "") +
+    (matchEp ? '<div class="episode">' + escapeHtml(matchEp) + "</div>" : "") +
     '<div class="meta">' +
     escapeHtml(matchMeta) +
     "</div>" +
+    // Own line: the watch date Watcharr holds (or the one the import stores).
+    (matchDate
+      ? '<div class="meta date">' + escapeHtml(matchDate) + "</div>"
+      : "") +
     '<div class="badges">' +
-    matchBadge(it) +
-    statusBadge(it) +
+    rowBadge(it) +
+    matchWarnings(it) +
     "</div>" +
     (it.error
       ? '<div class="row-error">' +
@@ -583,10 +625,18 @@ function refreshScrollTriggers() {
   scrollTriggers = Array.prototype.slice.call(rows, start);
 }
 
+/** Filter match: the provider title (left side) and, when present, also the
+ *  Watcharr name of the match – a row stays findable under both names. */
+function matchesFilter(it) {
+  if (!filter) return true;
+  const provider = String(it.title || "").toLowerCase();
+  const matched =
+    it.match && it.match.name ? String(it.match.name).toLowerCase() : "";
+  return provider.includes(filter) || matched.includes(filter);
+}
+
 function render() {
-  items = allItems.filter(
-    (it) => !filter || it.title.toLowerCase().includes(filter),
-  );
+  items = allItems.filter(matchesFilter);
   els.list.innerHTML = "";
   hintEl = null;
   if (!items.length) {
@@ -612,9 +662,7 @@ function render() {
 
 /** Appends new items to end of list without re-rendering the whole list. */
 function appendItems(newItems) {
-  const filtered = newItems.filter(
-    (it) => !filter || it.title.toLowerCase().includes(filter),
-  );
+  const filtered = newItems.filter(matchesFilter);
   items.push(...filtered);
   if (!filtered.length) {
     updateHint();
@@ -1263,6 +1311,7 @@ els.list.addEventListener("click", async (e) => {
         const item = document.createElement("div");
         item.className = "rematch-result";
         const poster = r.extPosterPath ? TMDB_IMG + r.extPosterPath : null;
+        const url = tmdbUrl(r);
         replaceFromHtml(
           item,
           (poster
@@ -1278,12 +1327,24 @@ els.list.addEventListener("click", async (e) => {
                   ? " · " + String(r.releaseDate).slice(0, 4)
                   : ""),
             ) +
-            "</div></div>",
+            "</div></div>" +
+            // Opens the TMDB page of this result in a new tab (independent of
+            // picking it as the match).
+            (url
+              ? '<a class="tmdb-link" href="' +
+                escapeHtml(url) +
+                '" target="_blank" rel="noopener noreferrer" title="' +
+                escapeHtml(ts("history.openTmdb")) +
+                '">TMDB</a>'
+              : ""),
         );
         item.addEventListener("click", () => {
           rematch(key, r, readEpisode());
           panel.remove();
         });
+        // The link must not pick the entry as the new match.
+        const link = item.querySelector(".tmdb-link");
+        if (link) link.addEventListener("click", (ev) => ev.stopPropagation());
         resultsBox.appendChild(item);
       }
     } catch (err) {
@@ -1354,12 +1415,11 @@ function importSummary(results) {
   const st = {
     imported: ts("history.statusImported"),
     updated: ts("history.statusUpdated"),
-    exists: ts("history.statusExists"),
     skipped: ts("history.statusSkipped"),
     error: ts("history.statusError"),
   };
   const parts = [];
-  for (const s of ["imported", "updated", "exists", "skipped", "error"]) {
+  for (const s of ["imported", "updated", "skipped", "error"]) {
     const n = results.filter((r) => r.status === s).length;
     if (n) parts.push(n + " " + st[s]);
   }
@@ -1388,11 +1448,7 @@ els.importBtn.addEventListener("click", async () => {
         it.status = byKey[it.key].status;
         it.error = byKey[it.key].error || null;
         it.errorCode = byKey[it.key].code || null;
-        if (
-          it.status === "imported" ||
-          it.status === "updated" ||
-          it.status === "exists"
-        ) {
+        if (it.status === "imported" || it.status === "updated") {
           it.selected = false;
           if (it.match) it.match.watchedId = byKey[it.key].watchedId || true;
         }
@@ -1400,10 +1456,7 @@ els.importBtn.addEventListener("click", async () => {
     }
     render();
     const okCount = results.filter(
-      (r) =>
-        r.status === "imported" ||
-        r.status === "updated" ||
-        r.status === "exists",
+      (r) => r.status === "imported" || r.status === "updated",
     ).length;
     const errCount = results.filter((r) => r.status === "error").length;
     if (okCount > 0) {

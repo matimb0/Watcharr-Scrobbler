@@ -205,6 +205,27 @@ class WatcharrClient {
   getWatchedShow(tmdbId) {
     return this._request("GET", "/content/tv/" + Number(tmdbId));
   }
+
+  /**
+   * Watch events (`activity`) of one watched entry. Watch events carry a
+   * `customDate` – the watch date – which the search/watchlist DTOs do not
+   * expose, and unlike the content detail pages this route needs no country.
+   */
+  getActivity(watchedId) {
+    return this._request("GET", "/activity/" + Number(watchedId));
+  }
+
+  /**
+   * Season details from TMDB (through Watcharr), including the episode list
+   * with the episode NAMES (`episodes[].name`). The watched entry itself only
+   * stores season/episode numbers, so this is the only source for a title.
+   */
+  getSeasonDetails(tmdbId, seasonNumber) {
+    return this._request(
+      "GET",
+      "/content/tv/" + Number(tmdbId) + "/season/" + Number(seasonNumber),
+    );
+  }
 }
 
 /**

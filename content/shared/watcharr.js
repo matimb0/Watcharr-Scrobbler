@@ -53,9 +53,21 @@
     return null;
   }
 
+  /** True when this search result is already on the user's Watcharr list. */
+  function isOnList(result) {
+    return !!(result && result.watched && result.watched.id);
+  }
+
   /**
-   * Best result for a title: same medium type first, then an exact title match,
-   * then a matching year, then simply the first candidate.
+   * Best result for a title: same medium type first, then
+   *  1. an exact title WITH the matching year,
+   *  2. a matching year elsewhere in the wanted medium,
+   *  3. an exact title that is already on the user's Watcharr list – providers
+   *     like Prime Video report no year at all, so for same-titled remakes
+   *     ("Road House") the entry the user already tracks is the best guess,
+   *  4. the first candidate.
+   * The year decides between same-titled media – "Road House" exists as 1989
+   * and 2024, so the first exact title match may be the wrong one.
    */
   function pickBestMatch(results, meta) {
     const norm = (s) => (s || "").toLowerCase().trim();
@@ -70,31 +82,65 @@
       : results.slice();
     if (!pool.length) pool = results.slice();
 
-    for (const r of pool) {
-      if (norm(r.name) === norm(meta.title)) return r;
-    }
+    const want = norm(meta.title);
+    const named = pool.filter((r) => norm(r.name) === want);
+    const candidates = named.length ? named : pool;
     if (meta.year) {
-      for (const r of pool) {
-        if (parseYear(r) === meta.year) return r;
-      }
+      const exact = candidates.find((r) => parseYear(r) === meta.year);
+      if (exact) return exact;
+      const hit = pool.find((r) => parseYear(r) === meta.year);
+      if (hit) return hit;
     }
-    return pool[0] || null;
+    // Several same-titled media (remake!) and no usable year: prefer the one
+    // already tracked in Watcharr instead of taking an arbitrary first hit.
+    if (candidates.length > 1) {
+      const onList = candidates.find(isOnList);
+      if (onList) return onList;
+    }
+    return candidates[0] || null;
+  }
+
+  /** Watcharr search type for a medium type ("show" = series), or null. */
+  function searchType(type) {
+    return type === "movie" ? "movie" : type === "tv" ? "show" : null;
+  }
+
+  /**
+   * Queries for one item, most specific first. Watcharr only evaluates the
+   * inline filters (`year:`/`fyear:`) for a TYPED search – a "multi" search
+   * strips them and ignores them, so the year would never be used.
+   *
+   *  1. typed + year filter (`fyear:` = TMDB first air year, series only),
+   *  2. typed without the filter (the known year may be the episode's),
+   *  3. "multi" without the filter (exists only under the other medium type).
+   */
+  function buildQueries(title, year, type) {
+    const name = String(title || "").trim();
+    if (!name) return [];
+    const typed = searchType(type);
+    const queries = [];
+    if (typed && year) {
+      const filter = (typed === "show" ? "fyear:" : "year:") + year;
+      queries.push({ query: name + " " + filter, searchType: typed });
+    }
+    if (typed) queries.push({ query: name, searchType: typed });
+    queries.push({ query: name, searchType: "multi" });
+    return queries;
   }
 
   /**
    * Searches the user's Watcharr instance and returns the best media result
-   * (or null). First with the year, then without – some titles are only found
-   * without it. `type` is "movie" | "tv" | null.
+   * (or null). Runs the queries from `buildQueries` in order, so a title that
+   * only exists under the other medium type is still found.
    */
   async function searchAndPick(title, year, type) {
-    const queries = year ? [title + " year:" + year, title] : [title];
-
-    for (const query of queries) {
+    for (const { query, searchType: st } of buildQueries(title, year, type)) {
       let resp;
       try {
         resp = await browser.runtime.sendMessage({
           type: "watcharr:search",
           query,
+          searchType: st,
         });
       } catch (_) {
         return null;
@@ -232,7 +278,10 @@
   globalThis.WatcharrContentApi = {
     createItem,
     parseYear,
+    isOnList,
     pickBestMatch,
+    searchType,
+    buildQueries,
     searchAndPick,
     resultTmdbId,
     applySearchResult,
