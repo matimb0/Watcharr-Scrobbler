@@ -2000,6 +2000,35 @@ async function showNoService() {
 }
 
 /**
+ * The last service tab is gone: drop the displayed history and put the page
+ * back into its initial state (the "open a service" hint). The list of a
+ * service that is not open any more would be dead weight – reloading/importing
+ * it is impossible.
+ *
+ * A load that is still running belongs to that closed tab and must not refill
+ * the cleared list, so it is superseded (which also means it will not release
+ * the locks itself – hence the explicit cleanup here).
+ */
+async function resetToNoService(available) {
+  serviceAvailable = false;
+  renderServiceToggle(available);
+  loadGen++; // discard a pending load / "load more" of the closed service
+  loadingInitial = false;
+  loadingMore = false;
+  stopProgressPolling();
+  items = [];
+  allItems = [];
+  scrollTriggers = [];
+  hintEl = null;
+  total = 0;
+  allLoaded = false;
+  fileName = "";
+  oldestFirst = false;
+  updateViewMenu();
+  await showNoService();
+}
+
+/**
  * Host access the background needs to load the history of the CURRENT service:
  * the patterns of that one service and the user's Watcharr instance – see
  * WatcharrServices.permissionOrigins.
@@ -2172,7 +2201,8 @@ async function switchProvider(id) {
 
 /**
  * Re-checks which service tabs are open and reconciles the header switch:
- *  - no service tab open                  -> switch hidden (current list kept),
+ *  - no service tab open                  -> switch hidden, list reset to the
+ *                                            "open a service" hint,
  *  - current provider's tab gone, another open -> switch to it (and reload),
  *  - first provider appeared while open   -> load its history,
  *  - service in front changed             -> follow it (and reload),
@@ -2191,10 +2221,15 @@ async function refreshProviders(detection, reason) {
   }
 
   if (!chosen) {
-    // No service tab is open (any more). Hide the switch, but keep the current
-    // view so closing a tab does not wipe the loaded history.
-    serviceAvailable = false;
-    renderServiceToggle(available);
+    // No service tab is open (any more): the displayed history belongs to a
+    // service that just went away, so clear it and go back to the initial
+    // state. Only when there really is something to clear – the periodic
+    // reconciliation must not rewrite the same hint every few seconds.
+    if (serviceAvailable || allItems.length || items.length) {
+      await resetToNoService(available);
+    } else {
+      renderServiceToggle(available);
+    }
     return false;
   }
 
