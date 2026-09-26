@@ -9,8 +9,17 @@
 "use strict";
 
 (function () {
-  const { log, logErr, normTitle, epKey, toEpochSeconds } =
-    globalThis.WatcharrUtil;
+  const {
+    log,
+    logErr,
+    normTitle,
+    normName,
+    episodeKeys,
+    addEpisodeToIndex,
+    lookupName,
+    epKey,
+    toEpochSeconds,
+  } = globalThis.WatcharrUtil;
   const userError = WatcharrErrors.create;
 
   async function getSettings() {
@@ -264,6 +273,31 @@
   }
 
   /**
+   * The Watcharr entry of one series (`GET /content/tv/<id>`), fetched ONCE per
+   * TMDB id – the watched episodes, the season list and the episode names all
+   * come from this one response, so a series is never requested twice.
+   *
+   * Resolves `{ ok, show }`; `ok:false` means the request failed (unknown),
+   * which callers must not confuse with "the series has no episodes".
+   */
+  const showCache = new Map(); // tmdbId -> Promise<{ok, show}>
+
+  function getShow(tmdbId) {
+    if (showCache.has(tmdbId)) return showCache.get(tmdbId);
+
+    const pending = (async () => {
+      const client = new WatcharrClient(await getSettings());
+      return { ok: true, show: await client.getWatchedShow(tmdbId) };
+    })().catch((err) => {
+      logErr("getShow: error for tmdbId", tmdbId, "->", err.message);
+      return { ok: false, show: null };
+    });
+
+    showCache.set(tmdbId, pending);
+    return pending;
+  }
+
+  /**
    * Episode status cache per TMDB id: many history rows belong to the same
    * series, so each series is queried once. The value is a Promise, so parallel
    * resolutions share the same request.
@@ -280,7 +314,11 @@
   function clearCache() {
     watchedEpisodesCache.clear();
     seasonEpisodesCache.clear();
+    seriesEpisodeIndexCache.clear();
+    seriesSeasonsCache.clear();
+    showCache.clear();
     movieWatchedCache.clear();
+    if (globalThis.WatcharrTmdbSite) globalThis.WatcharrTmdbSite.clearCache();
   }
 
   /** episodeNumber -> episode name of one season (or null when unavailable). */
@@ -329,6 +367,260 @@
   }
 
   /**
+   * Episode index of one series: normalized episode NAME -> { season, episode }.
+   * Built once per TMDB id from every season of the show (TMDB, through
+   * Watcharr), so the names of the seasons are shared with the episode-name
+   * cache above.
+   *
+   * A title carried by MORE than one episode is dropped from the index, so an
+   * ambiguous name can never resolve to a guessed episode. Lookups go through
+   * `lookupName`, which also accepts a close spelling.
+   */
+  const seriesEpisodeIndexCache = new Map(); // tmdbId -> Promise<Map|null>
+
+  function getSeriesEpisodeIndex(tmdbId) {
+    if (seriesEpisodeIndexCache.has(tmdbId)) {
+      return seriesEpisodeIndexCache.get(tmdbId);
+    }
+
+    const pending = (async () => {
+      const { ok, show } = await getShow(tmdbId);
+      if (!ok) return null;
+      const seasons = Array.isArray(show && show.seasons) ? show.seasons : [];
+      const index = new Map();
+      const ambiguous = new Set();
+      for (const season of seasons) {
+        const number = Number(season && season.number);
+        if (!Number.isFinite(number)) continue;
+        const titles = await getSeasonEpisodes(tmdbId, number);
+        if (!titles) continue;
+        for (const [episodeNumber, name] of titles) {
+          // Indexed under the episode name AND its position (see util.js), so a
+          // row whose service labels the episode differently still matches.
+          addEpisodeToIndex(
+            index,
+            ambiguous,
+            episodeKeys(name, number, Number(episodeNumber)),
+            { season: number, episode: Number(episodeNumber) },
+          );
+        }
+      }
+      for (const key of ambiguous) index.delete(key);
+      return index;
+    })().catch((err) => {
+      logErr(
+        "getSeriesEpisodeIndex: error for tmdbId",
+        tmdbId,
+        "->",
+        err.message,
+      );
+      return null;
+    });
+
+    seriesEpisodeIndexCache.set(tmdbId, pending);
+    return pending;
+  }
+
+  /**
+   * Fills in season/episode for a row whose SERVICE reported none – derived from
+   * the data Watcharr already has: if exactly ONE episode of the matched series
+   * is recorded with this row's watch date (the watch time the service
+   * reported), then that episode is the one that was watched.
+   *
+   * This is not a guess: the episode is identified by an exact date+time match
+   * (a small tolerance covers services that report seconds differently), and
+   * nothing is set when the date matches several episodes or none. It recovers
+   * the numbering for titles a service does not report (episode) data for any
+   * more, as long as the watch is already known to Watcharr.
+   */
+  const DATE_TOLERANCE_SECONDS = 120;
+
+  async function resolveEpisodeFromDate(item) {
+    if (!item.isTv || !item.match) return false;
+    if (item.season != null && item.episode != null) return false;
+    const seconds = toEpochSeconds(item.date);
+    if (seconds == null) return false;
+
+    // A series without recorded episodes has nothing to match against, and the
+    // result is "unknown" (not "no episodes") when the lookup itself failed.
+    const result = await getWatchedEpisodes(item.match.tmdbId);
+    if (!result.ok || !result.finishedByEp.size) return false;
+
+    const hits = [];
+    for (const [key, dates] of result.finishedByEp) {
+      for (const epoch of dates.keys()) {
+        if (Math.abs(Number(epoch) - seconds) <= DATE_TOLERANCE_SECONDS) {
+          const [season, episode] = String(key).split(":");
+          hits.push({ season: Number(season), episode: Number(episode) });
+          break;
+        }
+      }
+    }
+    if (hits.length !== 1) return false;
+    const hit = hits[0];
+    if (!Number.isInteger(hit.season) || !Number.isInteger(hit.episode)) {
+      return false;
+    }
+
+    item.season = hit.season;
+    item.episode = hit.episode;
+    item.episodeSource = "date";
+    log(
+      "resolveEpisodeFromDate:",
+      JSON.stringify(item.title),
+      item.date,
+      "-> S" + hit.season + "E" + hit.episode,
+    );
+    return true;
+  }
+
+  /**
+   * Season numbers of one series (cached). They come from the same Watcharr
+   * entry the episode names come from – `seasons[].number` is all that is
+   * needed to walk the TMDB season pages (see resolveEpisodeFromTmdbSite).
+   */
+  const seriesSeasonsCache = new Map(); // tmdbId -> Promise<number[]>
+
+  function getSeriesSeasons(tmdbId) {
+    if (seriesSeasonsCache.has(tmdbId)) return seriesSeasonsCache.get(tmdbId);
+
+    const pending = (async () => {
+      const { ok, show } = await getShow(tmdbId);
+      if (!ok) return [];
+      const seasons = Array.isArray(show && show.seasons) ? show.seasons : [];
+      return seasons
+        .map((s) => Number(s && s.number))
+        .filter((n) => Number.isInteger(n));
+    })().catch((err) => {
+      logErr("getSeriesSeasons: error for tmdbId", tmdbId, "->", err.message);
+      return [];
+    });
+
+    seriesSeasonsCache.set(tmdbId, pending);
+    return pending;
+  }
+
+  /**
+   * The name to match an episode by: the service's episode title without a
+   * series-name prefix.
+   *
+   * Netflix labels a pilot "Dexter – Pilot" ("<Series> – <Episode>", also seen
+   * with ":", "|" and "-"), and that prefix would keep the name from
+   * matching. It is only removed when the leading part IS the series name – an
+   * episode title that merely starts with the series name ("Psych macht Musik:
+   * Weltstars singen …") keeps its full name, because that IS the title.
+   */
+  function episodeProbeName(item) {
+    const raw = String(item.episodeTitle || "").trim();
+    if (!raw) return "";
+    // A dash/pipe only separates when whitespace follows, so a hyphenated title
+    // ("Spider-Man") is never split; a colon may sit directly on the name.
+    const parts = raw.split(/\s*(?:[-–—|]\s+|:\s*)/);
+    if (parts.length < 2) return raw;
+    const head = normName(parts[0]);
+    const series = normName(item.title);
+    if (!head || !series || head !== series) return raw;
+    const rest = parts.slice(1).join(" - ").trim();
+    return rest || raw;
+  }
+
+  /**
+   * Fills in season/episode by looking the EPISODE TITLE up in TMDB's episode
+   * list for the matched series – in the language the service reported it in.
+   *
+   * This is what makes the automation work for titles a service does not report
+   * (episode) data for any more (a delisted Netflix title keeps nothing but the
+   * localized episode name): the name is the key, TMDB supplies the numbering.
+   * Only a name that identifies exactly ONE episode of the series is used, so a
+   * wrong episode can never be picked.
+   */
+  async function resolveEpisodeFromTmdbSite(item) {
+    if (!item.isTv || !item.match || !item.episodeTitle) return false;
+    if (item.season != null && item.episode != null) return false;
+    const probe = episodeProbeName(item);
+    const name = normName(probe);
+    // A very short name is not a usable key ("Pilot" is fine, "1" is not).
+    if (name.length < 3) return false;
+    if (!globalThis.WatcharrTmdbSite) return false;
+
+    const Tmdb = globalThis.WatcharrTmdbSite;
+    const seasons = await getSeriesSeasons(item.match.tmdbId);
+    if (!seasons.length) return false;
+
+    // The language the service reported the title in comes first. The default
+    // catalog is tried as well, because many series carry real episode titles
+    // only in English while the localized list is generic ("Folge 4") – it is
+    // the same cached per-season data, so a miss costs what the Watcharr
+    // fallback below would cost anyway.
+    const languages = [];
+    const add = (lang) => {
+      const tag = Tmdb.languageTag(lang);
+      if (tag && languages.indexOf(tag) === -1) languages.push(tag);
+    };
+    add(item.providerLanguage || Tmdb.uiLanguage());
+    add(Tmdb.defaultLanguage || "en-US");
+
+    for (const language of languages) {
+      const index = await Tmdb.episodeIndex(
+        item.match.tmdbId,
+        seasons,
+        language,
+      );
+      const hit = index && lookupName(index, probe);
+      if (!hit) continue;
+
+      item.season = hit.season;
+      item.episode = hit.episode;
+      item.episodeSource = "name";
+      log(
+        "resolveEpisodeFromTmdbSite:",
+        JSON.stringify(item.title),
+        JSON.stringify(item.episodeTitle),
+        "(" + language + ")",
+        "-> S" + hit.season + "E" + hit.episode,
+      );
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * Fills in season/episode for an episode row whose SERVICE reported none
+   * (Netflix catalogs can be incomplete, and then the history row only has the
+   * episode's title). The episode is looked up by its title in the matched
+   * series – the title comes from the service, the numbering from TMDB
+   * (through Watcharr), and a title that is not unique across the show's
+   * seasons is ignored instead of guessing.
+   *
+   * This is the last resort and only runs for rows without a season/episode;
+   * every season of a series is only queried once (cached, and cleared per
+   * history load).
+   */
+  async function resolveEpisodeFromTitle(item) {
+    if (!item.isTv || !item.match || !item.episodeTitle) return false;
+    if (item.season != null && item.episode != null) return false;
+    const probe = episodeProbeName(item);
+    const key = normName(probe);
+    // A one-character title ("Pilot" is fine, "1" is not) is not a usable key.
+    if (key.length < 3) return false;
+
+    const index = await getSeriesEpisodeIndex(item.match.tmdbId);
+    const hit = index && lookupName(index, probe);
+    if (!hit) return false;
+
+    item.season = hit.season;
+    item.episode = hit.episode;
+    item.episodeSource = "name";
+    log(
+      "resolveEpisodeFromTitle:",
+      JSON.stringify(item.title),
+      JSON.stringify(item.episodeTitle),
+      "-> S" + hit.season + "E" + hit.episode,
+    );
+    return true;
+  }
+
+  /**
    * Watch dates of one Watcharr entry (one request per entry). They come from
    * the entry's watch events (`GET /api/activity/:watchedId`, each event may
    * carry a `customDate`). Returns them as ISO strings, newest first – used for
@@ -372,9 +664,9 @@
     }
 
     const pending = (async () => {
-      const client = new WatcharrClient(await getSettings());
-      const data = await client.getWatchedShow(tmdbId);
-      const watched = data && data.watched;
+      const { ok, show } = await getShow(tmdbId);
+      if (!ok) return { ok: false, episodes: [], finishedByEp: new Map() };
+      const watched = show && show.watched;
       const raw =
         watched && Array.isArray(watched.watchedEpisodes)
           ? watched.watchedEpisodes
@@ -422,12 +714,7 @@
       return { ok: true, episodes, finishedByEp };
     })().catch((err) => {
       logErr("getWatchedEpisodes: error for tmdbId", tmdbId, "->", err.message);
-      return {
-        ok: false,
-        episodes: [],
-        finishedByEp: new Map(),
-        error: err.message,
-      };
+      return { ok: false, episodes: [], finishedByEp: new Map() };
     });
 
     watchedEpisodesCache.set(tmdbId, pending);
@@ -520,6 +807,9 @@
     resultToMatch,
     resolveMatchByTmdbId,
     resolveItemEpisodeStatus,
+    resolveEpisodeFromDate,
+    resolveEpisodeFromTmdbSite,
+    resolveEpisodeFromTitle,
     getEpisodeName,
     getWatchDates,
     clearCache,

@@ -103,6 +103,13 @@ const WatcharrHistory = (() => {
       date: toIsoDateString(entry.date),
       season: isTv && entry.season != null ? entry.season : null,
       episode: isTv && entry.episode != null ? entry.episode : null,
+      // Season/episode AS REPORTED BY THE SERVICE. `season`/`episode` above are
+      // the EFFECTIVE numbers used for matching and importing (they can be
+      // derived when the service has no data left for a title), while these two
+      // are what the provider side of the comparison renders – strictly the
+      // service's own data, never anything Watcharr or a derivation contributed.
+      providerSeason: isTv && entry.season != null ? entry.season : null,
+      providerEpisode: isTv && entry.episode != null ? entry.episode : null,
       // Provider-side data. It is shown AS-IS on the left of the comparison
       // and is never derived from the Watcharr match (see
       // history/history.js) – title/year/episode of the row belong to the
@@ -110,6 +117,16 @@ const WatcharrHistory = (() => {
       episodeTitle: entry.episodeTitle || null,
       providerId: entry.providerId != null ? String(entry.providerId) : null,
       providerType: entry.providerType || null,
+      // Reason code from the provider when it could not report a season/episode
+      // (shown as a warning on the row, see history/history.js).
+      providerNote: entry.providerNote || null,
+      // Language the service reported this entry's title in – the episode name
+      // is looked up in that language (see background/tmdb-site.js).
+      providerLanguage: entry.providerLanguage || null,
+      // true when season/episode had to be derived (not reported by the service)
+      episodeDerived: false,
+      // what the derivation used: "date" (exact watch date) or "name" (episode name)
+      episodeSource: null,
       // TMDB data known in advance (imported file): the row is matched on
       // exactly this TMDB id instead of guessing by title/year.
       tmdbHint: entry.tmdbHint || null,
@@ -142,9 +159,14 @@ const WatcharrHistory = (() => {
       date: item.date,
       season: item.season,
       episode: item.episode,
+      providerSeason: item.providerSeason,
+      providerEpisode: item.providerEpisode,
       episodeTitle: item.episodeTitle,
       providerId: item.providerId,
       providerType: item.providerType,
+      providerNote: item.providerNote || null,
+      episodeDerived: !!item.episodeDerived,
+      episodeSource: item.episodeSource || null,
       match: item.match,
       matchError: item.matchError,
       matchErrorCode: item.matchErrorCode || null,
@@ -214,6 +236,25 @@ const WatcharrHistory = (() => {
         );
         item.matchError = item.match ? null : "no match in Watcharr";
         item.matchErrorCode = item.match ? null : "no_match";
+      }
+      // Series: the service sometimes reports no season/episode (a delisted
+      // title has no catalog data at all, e.g. on Netflix). Then the episode is
+      // derived from data that IS available, in this order:
+      //   1. an episode of this series recorded in Watcharr at exactly this
+      //      watch date (deterministic),
+      //   2. the episode title the service reported, matched against TMDB's
+      //      episode lists in its own language AND in the default one (the
+      //      automation – see background/tmdb-site.js),
+      //   3. the same against the episode names Watcharr serves (TMDB en-US) –
+      //      the safety net for when TMDB's website is not reachable (missing
+      //      host permission, service outage).
+      // Nothing is ever guessed (see the matcher).
+      if (item.match) {
+        const derived =
+          (await matcher.resolveEpisodeFromDate(item)) ||
+          (await matcher.resolveEpisodeFromTmdbSite(item)) ||
+          (await matcher.resolveEpisodeFromTitle(item));
+        if (derived) item.episodeDerived = true;
       }
       // Series: is exactly THIS episode already watched in Watcharr?
       await matcher.resolveItemEpisodeStatus(item);
@@ -441,6 +482,22 @@ const WatcharrHistory = (() => {
       item.match = matcher.resultToMatch(result);
       item.matchError = item.match ? null : "no match";
       item.matchErrorCode = item.match ? null : "no_match";
+    }
+    // The user decided: a corrected season/episode or a new match means the
+    // AUTOMATIC derivation (see the matcher) is no longer what the row's
+    // numbers are based on, so its "determined automatically" marker goes away.
+    if ((episode && item.isTv) || (result && result.ids)) {
+      item.episodeDerived = false;
+      item.episodeSource = null;
+    }
+    // A new match for an episode row still WITHOUT numbers is derived again for
+    // that series (the numbers of the previous match must not be carried over).
+    if (result && result.ids && item.isTv && !episode) {
+      const derived =
+        (await matcher.resolveEpisodeFromDate(item)) ||
+        (await matcher.resolveEpisodeFromTmdbSite(item)) ||
+        (await matcher.resolveEpisodeFromTitle(item));
+      if (derived) item.episodeDerived = true;
     }
     // Episode status for the (possibly new) match (display only).
     await matcher.resolveItemEpisodeStatus(item);

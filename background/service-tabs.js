@@ -206,9 +206,17 @@
 
   async function injectNow(svc, tab) {
     try {
-      await browser.tabs.sendMessage(tab.id, { type: "watcharr:ping" });
-      readyTabs.add(tab.id);
-      return true;
+      // Only THIS build's content script counts as ready: a tab that kept an
+      // older one (extension updated while the page was open) is upgraded by
+      // the injection below, otherwise it would keep scrobbling with old code.
+      const ping = await browser.tabs.sendMessage(tab.id, {
+        type: "watcharr:ping",
+      });
+      const S = registry();
+      if (S && S.isCurrentContent(ping)) {
+        readyTabs.add(tab.id);
+        return true;
+      }
     } catch (_) {
       /* no content script in this tab yet -> inject below */
     }

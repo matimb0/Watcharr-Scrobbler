@@ -313,11 +313,15 @@ function episodeRecordedAtDate(it) {
   );
 }
 
-/** "S1E2" for an episode row, otherwise "". Season 0 (specials) is valid. */
+/** "S1E2" out of two numbers. Season 0 (specials) is valid. */
+function episodeLabelOf(season, episode) {
+  return season != null && episode != null ? "S" + season + "E" + episode : "";
+}
+
+/** "S1E2" of the EFFECTIVE numbers of a row (what gets matched and imported –
+ *  they can be derived when the service has no data left for the title). */
 function episodeLabel(it) {
-  return it.isTv && it.season != null && it.episode != null
-    ? "S" + it.season + "E" + it.episode
-    : "";
+  return it.isTv ? episodeLabelOf(it.season, it.episode) : "";
 }
 
 /** Already transferred rows are not selectable. */
@@ -436,7 +440,56 @@ function matchWarnings(it) {
       ),
     );
   }
+  if (missingEpisode(it)) {
+    out.push(
+      badge(
+        "warn",
+        ts("history.badgeNoEpisode"),
+        ts("history.badgeNoEpisodeTitle", {
+          reason: ts(
+            it.providerNote === "episodeUnknown"
+              ? "history.noEpisodeReasonUnknown"
+              : "history.noEpisodeReasonNoMetadata",
+          ),
+        }),
+      ),
+    );
+  }
+  if (episodeDerived(it)) {
+    // Same yellow "please check" badge as an ambiguous match – here it only
+    // informs HOW the season/episode were found (the service had no data left
+    // for this title), so the tooltip names the source.
+    out.push(
+      badge(
+        "warn",
+        ts("history.badgeCheck"),
+        ts(
+          it.episodeSource === "date"
+            ? "history.badgeEpisodeByDateTitle"
+            : "history.badgeEpisodeByNameTitle",
+        ),
+      ),
+    );
+  }
   return out.join("");
+}
+
+/** Season/episode were DERIVED (the service reported none) – assigned
+ *  automatically, but worth a look: how exact the derivation is depends on the
+ *  source (`episodeSource`: the watch date, or the episode name). */
+function episodeDerived(it) {
+  return !!(it.isTv && it.episodeDerived);
+}
+
+/** The service itself reported a series entry without season/episode, so the
+ *  row can only be imported as the series – the user has to know that. */
+function missingEpisode(it) {
+  return !!(
+    it.isTv &&
+    it.providerNote &&
+    it.season == null &&
+    it.episode == null
+  );
 }
 
 /** Locale tag for date/time formatting (follows the UI language). */
@@ -478,10 +531,16 @@ function providerMeta(it) {
   return parts.join(" · ");
 }
 
-/** Episode line of the provider side: "S1E2 · Episode title" (whichever part
- *  the service knows). */
-function providerEpisode(it) {
-  return [episodeLabel(it), it.episodeTitle].filter((p) => !!p).join(" · ");
+/** Episode line of the PROVIDER side: "S1E2 · Episode title", built ONLY from
+ *  what the service itself reported. It deliberately reads `providerSeason`/
+ *  `providerEpisode` instead of `season`/`episode`, because those carry the
+ *  EFFECTIVE numbers (which may have been derived) – the left side must never
+ *  show anything the service did not report. */
+function providerEpisodeLine(it) {
+  const label = it.isTv
+    ? episodeLabelOf(it.providerSeason, it.providerEpisode)
+    : "";
+  return [label, it.episodeTitle].filter((p) => !!p).join(" · ");
 }
 
 /** The match had to be guessed (several same-titled entries, no year known).
@@ -531,7 +590,7 @@ function rowHtml(it) {
     ? ts("history.metadataOn", { date: formatDateTime(matchDateValue) })
     : "";
 
-  const providerEp = providerEpisode(it);
+  const providerEp = providerEpisodeLine(it);
   const transferred = isTransferred(it);
   return (
     '<div class="row' +
@@ -1218,27 +1277,29 @@ els.list.addEventListener("click", async (e) => {
     existing.remove();
     return;
   }
-  // Episode rows: season/episode are editable, because a wrong episode number
-  // must be correctable even when the series match itself is right.
-  const isEpisode = !!(
-    it &&
-    it.isTv &&
-    it.season != null &&
-    it.episode != null
-  );
-  const episodeFields = isEpisode
+  // Season/episode are editable for EVERY series row: a wrong number must be
+  // correctable, and a row whose service reported none (a delisted title has no
+  // catalog data any more, e.g. on Netflix) can only be imported at all when
+  // the numbers can be entered here.
+  const isSeries = !!(it && it.isTv);
+  const episodeFields = isSeries
     ? '<div class="rematch-episode">' +
+      (it.season == null || it.episode == null
+        ? '<div class="hint">' +
+          escapeHtml(ts("history.episodeMissingHint")) +
+          "</div>"
+        : "") +
       "<label><span>" +
       escapeHtml(ts("history.episodeSeason")) +
       '</span><input type="number" class="ep-season" min="0" step="1" ' +
       'inputmode="numeric" value="' +
-      it.season +
+      (it.season == null ? "" : it.season) +
       '" /></label>' +
       "<label><span>" +
       escapeHtml(ts("history.episodeNumber")) +
       '</span><input type="number" class="ep-episode" min="1" step="1" ' +
       'inputmode="numeric" value="' +
-      it.episode +
+      (it.episode == null ? "" : it.episode) +
       '" /></label>' +
       '<button type="button" class="ghost apply-episode">' +
       escapeHtml(ts("history.episodeApply")) +
@@ -1263,10 +1324,13 @@ els.list.addEventListener("click", async (e) => {
   row.after(panel);
 
   // Season/episode as currently typed into the (editable) number fields.
+  // An empty field means "unknown" (the row keeps its value then).
   const readEpisode = () => {
-    if (!isEpisode) return null;
-    const season = parseInt(panel.querySelector(".ep-season").value, 10);
-    const number = parseInt(panel.querySelector(".ep-episode").value, 10);
+    if (!isSeries) return null;
+    const seasonEl = panel.querySelector(".ep-season");
+    const episodeEl = panel.querySelector(".ep-episode");
+    const season = parseInt(seasonEl.value, 10);
+    const number = parseInt(episodeEl.value, 10);
     return {
       season: Number.isInteger(season) && season >= 0 ? season : it.season,
       episode: Number.isInteger(number) && number >= 1 ? number : it.episode,

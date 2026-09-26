@@ -91,12 +91,27 @@
       );
     }
 
-    // 1) A tab that already runs the content script wins.
+    // 1) A tab that already runs THIS build's content script wins. A tab that
+    //    answers with an older protocol version (the extension was updated
+    //    while the page stayed open) is upgraded in step 2 – without this, the
+    //    history would silently be built by the outdated code in that tab.
     for (const tab of candidates) {
       try {
-        await browser.tabs.sendMessage(tab.id, { type: "watcharr:ping" });
-        log("ensureServiceTab: content script running in tab", tab.id);
-        return tab.id;
+        const ping = await browser.tabs.sendMessage(tab.id, {
+          type: "watcharr:ping",
+        });
+        if (WatcharrServices.isCurrentContent(ping)) {
+          log("ensureServiceTab: content script running in tab", tab.id);
+          return tab.id;
+        }
+        log(
+          "ensureServiceTab: tab",
+          tab.id,
+          "runs content script version",
+          (ping && ping.version) || "?",
+          "(expected",
+          WatcharrServices.CONTENT_SCRIPT_VERSION + ") -> injecting",
+        );
       } catch (_) {
         /* no content script in this tab -> try the next one */
       }
@@ -129,7 +144,9 @@
           files: svc.contentScripts,
         });
         // Give the injected scripts (and Netflix' MAIN-world probe) a moment
-        // to initialise, then check that the tab really answers.
+        // to initialise, then check that the tab really answers – the answer of
+        // an outdated listener that is still registered counts as well, because
+        // re-running the scripts replaced their globals.
         await new Promise((r) => setTimeout(r, 800));
         try {
           await browser.tabs.sendMessage(tab.id, { type: "watcharr:ping" });

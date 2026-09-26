@@ -193,6 +193,10 @@
     // primevideo.com also covers the Prime Video API hosts
     // (atv-ps.primevideo.com, atv-ps-<region>.primevideo.com).
     "*://*.primevideo.com/*",
+    // TMDB's website: episode names in the user's language. Needed because
+    // Watcharr asks TMDB with a hardcoded language (en-US), while the services
+    // report localized episode titles (see background/tmdb-site.js).
+    "*://*.themoviedb.org/*",
     "*://*.plex.tv/*", // Plex login (plex.tv OAuth)
   ];
 
@@ -253,14 +257,33 @@
         origins.push(pattern);
       }
     };
-    // For a single service its own pattern already covers the service host.
-    if (!only) STATIC_HOSTS.forEach(add);
+    // The fixed hosts are always needed, no matter which service is loaded
+    // (e.g. TMDB's website for episode names, see background/tmdb-site.js) –
+    // `only` therefore restricts the SERVICE patterns, not these.
+    STATIC_HOSTS.forEach(add);
     for (const svc of list) {
       if (only && !only.has(svc.id)) continue;
       patterns(svc, settings).forEach(add);
     }
     add(originPattern(settings && settings.watcharrUrl));
     return origins;
+  }
+
+  /**
+   * Version of the content-script protocol. Bump it whenever the content
+   * scripts change in a way that matters (new message fields, new endpoints).
+   *
+   * Firefox keeps the content script of an already-open tab when the extension
+   * is updated – that tab would keep running the OLD code (and silently produce
+   * old results) until the page is reloaded manually. Every tab is therefore
+   * pinged and re-injected when it does not report this version. Keep in sync
+   * with CONTENT_SCRIPT_VERSION in content/shared/messaging.js.
+   */
+  const CONTENT_SCRIPT_VERSION = 2;
+
+  /** True when a `watcharr:ping` answer came from this build's content script. */
+  function isCurrentContent(ping) {
+    return !!ping && ping.version === CONTENT_SCRIPT_VERSION;
   }
 
   const api = {
@@ -273,6 +296,8 @@
     hasHistory,
     originPattern,
     permissionOrigins,
+    CONTENT_SCRIPT_VERSION,
+    isCurrentContent,
   };
 
   globalThis.WatcharrServices = api;

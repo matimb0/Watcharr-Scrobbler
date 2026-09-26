@@ -9,6 +9,14 @@
 
 (function () {
   /**
+   * Version of the content-script protocol – must match
+   * CONTENT_SCRIPT_VERSION in background/services.js (see there). The
+   * background uses it to notice a tab that still runs an older build of the
+   * extension and re-injects the scripts into it.
+   */
+  const CONTENT_SCRIPT_VERSION = 2;
+
+  /**
    * Registers the listeners.
    *
    * @param handlers { getSummary(), fetchHistoryPage(page, loadId) }
@@ -23,7 +31,7 @@
 
       // Ping: proves that this content script runs in the tab.
       if (type === "watcharr:ping") {
-        sendResponse({ status: "ok" });
+        sendResponse({ status: "ok", version: CONTENT_SCRIPT_VERSION });
         return false;
       }
 

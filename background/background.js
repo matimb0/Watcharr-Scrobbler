@@ -11,6 +11,7 @@
 const MESSAGE_HANDLERS = [
   WatcharrMessageSettings,
   WatcharrMessageScrobble,
+  WatcharrMessageNetflix,
   WatcharrMessagePrimeVideo,
   WatcharrMessageHistory,
 ];

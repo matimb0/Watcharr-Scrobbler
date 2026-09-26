@@ -17,6 +17,7 @@
   "host_permissions": [
     "*://*.netflix.com/*",
     "*://*.primevideo.com/*",
+    "*://*.themoviedb.org/*",
     "*://*.plex.tv/*"
   ],
   "optional_host_permissions": ["*://*/*"],
@@ -31,6 +32,7 @@
       "content/history-file/export.js",
       "background/watcharr-client.js",
       "background/jellyfin.js",
+      "background/tmdb-site.js",
       "background/history/matcher.js",
       "background/history/loader.js",
       "background/history/exporter.js",
@@ -38,6 +40,7 @@
       "background/history/index.js",
       "background/messages/settings.js",
       "background/messages/scrobble.js",
+      "background/messages/netflix.js",
       "background/messages/primevideo.js",
       "background/messages/history.js",
       "background/background.js"
