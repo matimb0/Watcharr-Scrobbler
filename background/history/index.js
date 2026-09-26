@@ -239,22 +239,11 @@ const WatcharrHistory = (() => {
       }
       // Series: the service sometimes reports no season/episode (a delisted
       // title has no catalog data at all, e.g. on Netflix). Then the episode is
-      // derived from data that IS available, in this order:
-      //   1. an episode of this series recorded in Watcharr at exactly this
-      //      watch date (deterministic),
-      //   2. the episode title the service reported, matched against TMDB's
-      //      episode lists in its own language AND in the default one (the
-      //      automation – see background/tmdb-site.js),
-      //   3. the same against the episode names Watcharr serves (TMDB en-US) –
-      //      the safety net for when TMDB's website is not reachable (missing
-      //      host permission, service outage).
-      // Nothing is ever guessed (see the matcher).
+      // derived automatically, cheapest source first – see
+      // matcher.deriveEpisode (watch date, positional name, TMDB episode list
+      // in the reported language, TMDB names via Watcharr).
       if (item.match) {
-        const derived =
-          (await matcher.resolveEpisodeFromDate(item)) ||
-          (await matcher.resolveEpisodeFromTmdbSite(item)) ||
-          (await matcher.resolveEpisodeFromTitle(item));
-        if (derived) item.episodeDerived = true;
+        if (await matcher.deriveEpisode(item)) item.episodeDerived = true;
       }
       // Series: is exactly THIS episode already watched in Watcharr?
       await matcher.resolveItemEpisodeStatus(item);
@@ -493,11 +482,7 @@ const WatcharrHistory = (() => {
     // A new match for an episode row still WITHOUT numbers is derived again for
     // that series (the numbers of the previous match must not be carried over).
     if (result && result.ids && item.isTv && !episode) {
-      const derived =
-        (await matcher.resolveEpisodeFromDate(item)) ||
-        (await matcher.resolveEpisodeFromTmdbSite(item)) ||
-        (await matcher.resolveEpisodeFromTitle(item));
-      if (derived) item.episodeDerived = true;
+      if (await matcher.deriveEpisode(item)) item.episodeDerived = true;
     }
     // Episode status for the (possibly new) match (display only).
     await matcher.resolveItemEpisodeStatus(item);

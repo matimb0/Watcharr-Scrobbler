@@ -49,8 +49,6 @@
     th: "TH",
   };
 
-  const indexCache = new Map(); // "tmdbId|language" -> Promise<Map|null>
-
   /** TMDB language tag for a language code ("de" -> "de-DE", "en" -> "en-US"). */
   function languageTag(language) {
     const raw = String(language || "").trim();
@@ -120,7 +118,7 @@
   }
 
   /** Season page of one series (`/season/<n>`), or null when unavailable. */
-  async function fetchSeason(tmdbId, seasonNumber, language) {
+  async function fetchSeasonPage(tmdbId, seasonNumber, language) {
     const url =
       HOST +
       "/tv/" +
@@ -163,80 +161,163 @@
   }
 
   /**
-   * Episode index of one series: normalized episode NAME -> { season, episode },
-   * built from the season pages of `seasonNumbers`. Cached per series+language,
-   * so a history page with many rows of one series costs one page per season.
-   *
-   * A name used by more than one episode is dropped from the index – an
-   * ambiguous name must never resolve to a guessed episode. Lookups go through
-   * `WatcharrUtil.lookupName`, which also accepts a close spelling.
+   * Episode list of ONE season page, fetched at most once (per series+language+
+   * season) and shared by every row of that series. Parallel workers therefore
+   * never double-fetch a season, and a second language costs nothing extra for
+   * the pages the first one already loaded.
    */
-  function episodeIndex(tmdbId, seasonNumbers, language) {
+  const seasonCache = new Map(); // "tmdbId|lang|season" -> Promise<episodes[]>
+
+  // Ceiling for ALL season requests at once: rows of DIFFERENT series are
+  // resolved in parallel too, and each of them fetches up to SEASON_CONCURRENCY
+  // pages – without this limit a big import would open dozens of connections at
+  // the same moment.
+  const fetchLimit = WatcharrUtil.createLimiter(6);
+
+  function seasonEpisodes(tmdbId, seasonNumber, language) {
+    const key = String(tmdbId) + "|" + language + "|" + seasonNumber;
+    let pending = seasonCache.get(key);
+    if (!pending) {
+      pending = fetchLimit(() =>
+        fetchSeasonPage(tmdbId, seasonNumber, language),
+      );
+      seasonCache.set(key, pending);
+    }
+    return pending;
+  }
+
+  // How many season pages may be in flight at once. Keeps a 20-season show to
+  // a few rounds instead of twenty, without hammering TMDB.
+  const SEASON_CONCURRENCY = 5;
+
+  /**
+   * The episode a NAME means in one series – as
+   *   `{ hit: {season, episode}|null, hasRealTitles, responses }`
+   * where `hasRealTitles` tells whether the pages carried real episode titles
+   * (instead of TMDB's generic “Folge 4” labels) and `responses` how many season
+   * pages actually answered. The caller uses both to decide whether another
+   * language (or another source at all) could still help – that is what keeps an
+   * unresolvable row from fetching every season twice.
+   *
+   * `probe` is the name the service reported (already stripped of a series-name
+   * prefix). Matching is tolerant (see WatcharrUtil.lookupName), the position a
+   * name means is understood ("Pilot", "Folge 7"), and a name that belongs to
+   * TWO episodes of the series resolves to nothing at all.
+   *
+   * The season pages are fetched in PARALLEL (SEASON_CONCURRENCY at a time) –
+   * resolving one row of an 8-season show costs two rounds instead of eight
+   * sequential requests. The result is memoized per series+language+probe, so
+   * the many rows that share an episode title (the same episode watched twice,
+   * a series imported in one go) cost no further work at all.
+   */
+  function findEpisode(tmdbId, seasonNumbers, language, probe) {
     const lang = languageTag(language);
-    const key = String(tmdbId) + "|" + lang;
-    if (indexCache.has(key)) return indexCache.get(key);
+    const name = WatcharrUtil.normName(probe);
+    if (!name) {
+      return Promise.resolve({ hit: null, hasRealTitles: false, responses: 0 });
+    }
+    const memoKey = String(tmdbId) + "|" + lang + "|" + name;
+    if (probeCache.has(memoKey)) return probeCache.get(memoKey);
 
     const pending = (async () => {
+      const seasons = (seasonNumbers || []).slice();
       const index = new Map();
       const ambiguous = new Set();
       // Every episode is linked twice on a season page (poster + expand), so
-      // the episodes are deduplicated by their number first – only a name that
-      // really belongs to TWO different episodes is ambiguous.
+      // the episodes are deduplicated by number – only a name that really
+      // belongs to TWO different episodes is ambiguous.
       const seenEpisodes = new Set();
-      for (const seasonNumber of seasonNumbers || []) {
-        const episodes = await fetchSeason(tmdbId, seasonNumber, lang);
-        for (const episode of episodes) {
-          const episodeKey = episode.season + ":" + episode.episode;
-          if (seenEpisodes.has(episodeKey)) continue;
-          seenEpisodes.add(episodeKey);
-          // Indexed under its name AND its position, so an episode the service
-          // labels differently ("Pilot" vs "Folge 1") still matches.
-          WatcharrUtil.addEpisodeToIndex(
-            index,
-            ambiguous,
-            WatcharrUtil.episodeKeys(
-              episode.title,
-              episode.season,
-              episode.episode,
-            ),
-            { season: episode.season, episode: episode.episode },
-          );
-        }
-      }
-      for (const name of ambiguous) index.delete(name);
-      console.log(
-        "[watcharr-scrobbler] TMDB episode index for",
-        tmdbId,
-        "(" + lang + "):",
-        // One entry per episode plus its positional keys, so this is the number
-        // of usable lookup keys, not of episodes.
-        index.size,
-        "keys",
+      let responses = 0;
+      let hasRealTitles = false;
+
+      await WatcharrUtil.mapWithConcurrency(
+        seasons,
+        SEASON_CONCURRENCY,
+        async (seasonNumber) => {
+          const episodes = await seasonEpisodes(tmdbId, seasonNumber, lang);
+          if (!Array.isArray(episodes)) return;
+          responses += 1;
+          for (const episode of episodes) {
+            const episodeKey = episode.season + ":" + episode.episode;
+            if (seenEpisodes.has(episodeKey)) continue;
+            seenEpisodes.add(episodeKey);
+            // A title that only repeats the position ("Folge 4") is TMDB's
+            // generic label, not a real name – a catalogue of those does not
+            // explain why a name was not found, so it is worth trying another
+            // language (see the caller).
+            if (!WatcharrUtil.positionKey(episode.title)) hasRealTitles = true;
+            WatcharrUtil.addEpisodeToIndex(
+              index,
+              ambiguous,
+              WatcharrUtil.episodeKeys(
+                episode.title,
+                episode.season,
+                episode.episode,
+              ),
+              { season: episode.season, episode: episode.episode },
+            );
+          }
+        },
       );
-      return index;
+      for (const key of ambiguous) index.delete(key);
+
+      const hit = WatcharrUtil.lookupName(index, probe);
+      if (hit) {
+        console.log(
+          "[watcharr-scrobbler] TMDB episode lookup",
+          tmdbId,
+          "(" + lang + "):",
+          JSON.stringify(probe),
+          "-> S" + hit.season + "E" + hit.episode,
+          "(" + responses + " season pages)",
+        );
+      }
+      return { hit, hasRealTitles, responses };
     })().catch((err) => {
       console.warn(
-        "[watcharr-scrobbler] TMDB episode index failed for",
+        "[watcharr-scrobbler] TMDB episode lookup failed for",
         tmdbId,
         "->",
         err.message || String(err),
       );
-      return null;
+      // A failed request is not "no real titles" – the caller must not conclude
+      // anything from it except "this source had no answer".
+      return { hit: null, hasRealTitles: true, responses: 0 };
     });
 
-    indexCache.set(key, pending);
+    rememberProbe(memoKey, pending);
     return pending;
   }
 
+  /**
+   * Probe memo with a cap: a long history would otherwise collect every episode
+   * title of every series it ever resolved. The oldest entries fall out first
+   * (a re-lookup only costs the cached season pages, not new requests).
+   */
+  const probeCache = new Map();
+  const PROBE_CACHE_MAX = 500;
+
+  function rememberProbe(key, pending) {
+    probeCache.set(key, pending);
+    while (probeCache.size > PROBE_CACHE_MAX) {
+      const oldest = probeCache.keys().next();
+      if (oldest.done) break;
+      probeCache.delete(oldest.value);
+    }
+  }
+
   function clearCache() {
-    indexCache.clear();
+    // `seasonCache` deliberately survives: it holds what was already fetched
+    // over the network, and a reload of the same history would just ask for the
+    // same pages again.
+    probeCache.clear();
   }
 
   globalThis.WatcharrTmdbSite = {
     defaultLanguage: DEFAULT_LANGUAGE,
     languageTag,
     uiLanguage,
-    episodeIndex,
+    findEpisode,
     clearCache,
   };
 })();

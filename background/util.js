@@ -161,19 +161,22 @@
   }
 
   /**
-   * Index keys of ONE episode: its normalized name, the position its name means
-   * (if any) and always its own position – so a row can be matched even when
-   * the service and TMDB label the episode in different ways.
+   * Index keys of ONE episode: its normalized name plus the positions that are
+   * unambiguous on their own – `#pos:first` (a pilot) and `#pos:s<season>e<n>`.
+   *
+   * A bare episode number (`#pos:e<n>`) is deliberately NOT a key: the index only
+   * holds the seasons that were fetched, so "episode 4" may look unique there
+   * while other seasons (not in the index) have one too. Bare numbers are
+   * answered by the matcher's fast path, which sees the complete season list.
    */
   function episodeKeys(name, season, episode) {
     const keys = [];
     const normalized = normName(name);
     if (normalized) keys.push(normalized);
-    const positional = positionKey(name);
+    const positional = indexablePositionKey(name);
     if (positional) keys.push(positional);
     if (Number.isInteger(season) && Number.isInteger(episode)) {
       keys.push(POSITION_PREFIX + "s" + season + "e" + episode);
-      keys.push(POSITION_PREFIX + "e" + episode);
       // A series' pilot is its first episode, whatever it is called.
       if (season === 1 && episode === 1) keys.push(POSITION_PREFIX + "first");
     }
@@ -196,11 +199,27 @@
   }
 
   /**
+   * Positional key a PROBE may resolve through the name index: a bare episode
+   * number is deliberately NOT one.
+   *
+   * The index only holds the seasons that were fetched, so an episode number
+   * that exists once there can still be ambiguous in reality (another season
+   * simply was not part of the fetched data) – the matcher's fast path answers
+   * bare numbers from the complete season list instead (see positionalEpisode).
+   */
+  function indexablePositionKey(name) {
+    const key = positionKey(name);
+    if (!key) return null;
+    const body = key.slice(POSITION_PREFIX.length);
+    return body === "first" || /^s\d+e\d+$/.test(body) ? key : null;
+  }
+
+  /**
    * Value for a NAME out of an episode index (`Map<key, value>`, built with
    * `addEpisodeToIndex`, see tmdb-site.js and matcher.js), or null.
    *
    *  1. the normalized name,
-   *  2. the position the name means ("Pilot", "Folge 7", …),
+   *  2. the position the name means ("Pilot", "Staffel 3 Folge 7"),
    *  3. the single best fuzzy match – but only when it is clearly better than
    *     every other candidate.
    *
@@ -213,7 +232,7 @@
     if (!key) return null;
     if (index.has(key)) return index.get(key);
 
-    const positional = positionKey(name);
+    const positional = indexablePositionKey(name);
     if (positional && index.has(positional)) return index.get(positional);
 
     let best = null;
@@ -255,9 +274,72 @@
     return new Date(date.getTime() - minutes * 60000).toISOString();
   }
 
+  /**
+   * A tiny semaphore: `run(fn)` executes `fn` as soon as fewer than `max` calls
+   * are in flight, so many series resolved at the same time cannot flood one
+   * host with requests. The per-series parallelism (see mapWithConcurrency) is
+   * fast on its own; this is the ceiling above ALL of them.
+   */
+  function createLimiter(max) {
+    const limit = Math.max(1, Number(max) || 1);
+    let active = 0;
+    const waiting = [];
+
+    function release() {
+      active--;
+      const next = waiting.shift();
+      if (next) {
+        active++;
+        next();
+      }
+    }
+
+    return function run(fn) {
+      return new Promise((resolve, reject) => {
+        const start = () => {
+          Promise.resolve().then(fn).then(resolve, reject).finally(release);
+        };
+        if (active < limit) {
+          active++;
+          start();
+        } else {
+          waiting.push(start);
+        }
+      });
+    };
+  }
+
   /** "season:episode" key for the per-episode maps. */
   function epKey(season, episode) {
     return Number(season) + ":" + Number(episode);
+  }
+
+  /**
+   * Runs `fn` over `items` with at most `limit` calls in flight, results in
+   * input order. Used wherever a series' seasons are fetched: one request per
+   * season is unavoidable, but they must not run one after another (that is
+   * what made episode lookups feel slow for series with many seasons).
+   *
+   * `fn` never throws – a rejected promise is handed through as `undefined` so a
+   * single failing season cannot abort the whole lookup.
+   */
+  async function mapWithConcurrency(items, limit, fn) {
+    const list = Array.isArray(items) ? items : [];
+    const results = new Array(list.length);
+    const workers = Math.max(1, Math.min(Number(limit) || 1, list.length || 1));
+    let next = 0;
+    const worker = async () => {
+      while (next < list.length) {
+        const index = next++;
+        try {
+          results[index] = await fn(list[index], index);
+        } catch (_) {
+          results[index] = undefined;
+        }
+      }
+    };
+    await Promise.all(Array.from({ length: workers }, () => worker()));
+    return results;
   }
 
   /** Whole seconds of an ISO date (tolerates server-side ms truncation). */
@@ -312,9 +394,12 @@
     normName,
     nameSimilarity,
     positionKey,
+    POSITION_PREFIX,
     episodeKeys,
     addEpisodeToIndex,
     lookupName,
+    mapWithConcurrency,
+    createLimiter,
     toIsoDateString,
     subtractMinutes,
     epKey,
