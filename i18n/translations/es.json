@@ -69,6 +69,7 @@
     "jellyfinUrlHint": "Solo es necesario si también usas Jellyfin. URL base de tu servidor Jellyfin (p. ej. http://192.168.1.10:8096). Inicia sesión en Jellyfin en este navegador: la extensión usa esa sesión, no necesitas un inicio de sesión aparte ni una clave de API.",
     "jellyfinSaved": "Servidor Jellyfin guardado.",
     "jellyfinInvalid": "No parece una URL http(s) válida; introduce la URL base de tu servidor Jellyfin.",
+    "jellyfinNoAccess": "La extensión aún no puede leer {url}. Haz clic en el campo, guarda de nuevo y concede el acceso en el aviso del navegador.",
     "error": {
       "generic": "Se ha producido un error desconocido.",
       "connection": "No se pudo conectar con Watcharr: {reason}",

@@ -325,7 +325,17 @@ async function load() {
   els.threshold.value = s.threshold || 90;
   els.thresholdValue.value = s.threshold + " %";
   els.stepsThreshold.textContent = s.threshold || 90;
-  if (els.jellyfinUrl) els.jellyfinUrl.value = s.jellyfinUrl || "";
+  if (els.jellyfinUrl) {
+    els.jellyfinUrl.value = s.jellyfinUrl || "";
+    // A stored server the extension may not read yet: say so instead of showing
+    // a value that looks fine but never does anything.
+    if (s.jellyfinUrl && !(await jellyfinAccessGranted())) {
+      showJellyfinBanner(
+        "error",
+        await t("settings.jellyfinNoAccess", { url: s.jellyfinUrl }),
+      );
+    }
+  }
   if (els.tmdbKey) els.tmdbKey.value = s.tmdbKey || "";
   await updateStepText(s.threshold || 90);
 
@@ -587,12 +597,80 @@ async function saveBehaviour() {
  * Built synchronously from the form fields, because it has to happen before the
  * permission request – see requestHostAccess().
  */
-function requestOrigins() {
-  if (!window.WatcharrServices) return [];
-  return WatcharrServices.permissionOrigins({
+function formSettings() {
+  return {
     watcharrUrl: els.url ? els.url.value.trim() : "",
     jellyfinUrl: els.jellyfinUrl ? els.jellyfinUrl.value.trim() : "",
-  });
+  };
+}
+
+/**
+ * Origins for what is in the form right now. The registry (background/
+ * services.js) is the authority – a missing origin there means "nothing to
+ * request", so a missing script would silently disable the whole permission
+ * request. The fallback below keeps the request alive in that case.
+ */
+/** Match pattern for one http(s) URL ("https://host/*"), or "" – the same
+ *  normalization the service registry applies to a Jellyfin server. */
+function originPatternOf(value) {
+  const raw = String(value || "").trim();
+  try {
+    const u = new URL(
+      /^[a-z][a-z0-9+.-]*:\/\//i.test(raw) ? raw : "http://" + raw,
+    );
+    return u.protocol === "http:" || u.protocol === "https:"
+      ? u.origin + "/*"
+      : "";
+  } catch (_) {
+    return "";
+  }
+}
+
+function originsFor(settings, serviceIds) {
+  if (window.WatcharrServices) {
+    return WatcharrServices.permissionOrigins(settings, serviceIds);
+  }
+  return [settings.watcharrUrl, settings.jellyfinUrl]
+    .map(originPatternOf)
+    .filter(Boolean);
+}
+
+function requestOrigins() {
+  return originsFor(formSettings());
+}
+
+/**
+ * Match patterns of the CONFIGURED Jellyfin server alone (no fixed service
+ * hosts, no Watcharr instance). The "cannot read it" hint is a statement about
+ * that server, so the check must not fail because of an unrelated host: Firefox
+ * lets the user revoke single hosts, and such a partially granted extension
+ * would otherwise be warned about a server that is readable.
+ */
+function jellyfinOrigins() {
+  const typed = formSettings().jellyfinUrl;
+  const base = window.WatcharrServices
+    ? WatcharrServices.normalizeServerUrl(typed)
+    : typed;
+  const pattern = originPatternOf(base);
+  return pattern ? [pattern] : [];
+}
+
+/**
+ * True while the extension may read the configured Jellyfin server. Host
+ * permissions are optional in the manifest, so they can be missing even after
+ * the URL was stored – Chrome in particular only ever grants them from an
+ * explicit request (and never on its own), and a server without that access
+ * looks configured but can never be read.
+ */
+async function jellyfinAccessGranted() {
+  if (!browser.permissions || !browser.permissions.contains) return true;
+  const origins = jellyfinOrigins();
+  if (!origins.length) return true;
+  try {
+    return await browser.permissions.contains({ origins });
+  } catch (_) {
+    return true; // cannot check – do not claim the access is missing
+  }
 }
 
 /**
@@ -655,7 +733,21 @@ async function saveJellyfinUrl() {
     showJellyfinBanner("error", await t("settings.jellyfinInvalid"));
     return;
   }
-  await accessPromise;
+  // Stored, but useless without the host permission: the request above is the
+  // only chance to get it (Chrome never grants it by itself), so a refusal must
+  // not be reported as a success. Checked against the server's own origin –
+  // a request that failed for an unrelated host must not count as "no access".
+  if (
+    normalized &&
+    !(await accessPromise) &&
+    !(await jellyfinAccessGranted())
+  ) {
+    showJellyfinBanner(
+      "error",
+      await t("settings.jellyfinNoAccess", { url: normalized }),
+    );
+    return;
+  }
   showJellyfinBanner("success", await t("settings.jellyfinSaved"));
 }
 

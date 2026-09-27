@@ -69,6 +69,7 @@
     "jellyfinUrlHint": "Only needed if you also use Jellyfin. Base URL of your Jellyfin server (e.g. http://192.168.1.10:8096). Log in to Jellyfin in this browser – the extension uses that session, so no separate login or API key is needed.",
     "jellyfinSaved": "Jellyfin server saved.",
     "jellyfinInvalid": "That does not look like a valid http(s) URL – please enter the base URL of your Jellyfin server.",
+    "jellyfinNoAccess": "The add-on is not allowed to read {url} yet. Click into the field and save again, then allow the access in the browser prompt.",
     "error": {
       "generic": "An unknown error occurred.",
       "connection": "Could not connect to Watcharr: {reason}",

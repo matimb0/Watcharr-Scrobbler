@@ -43,3 +43,17 @@ WatcharrServiceTabs.start();
 WatcharrJellyfin.sync().catch((err) => {
   console.error("[watcharr-scrobbler] Jellyfin setup failed:", err);
 });
+
+// Host access the user grants at runtime (the self-hosted Jellyfin server, the
+// Watcharr instance) changes what the content scripts may do. Re-running the
+// Jellyfin setup re-registers the content script and re-injects the open
+// service tabs, so a page that is already open starts working without a manual
+// reload – Chrome grants these permissions only from an explicit request, so
+// this is the normal case for a first-time setup there.
+if (browser.permissions && browser.permissions.onAdded) {
+  browser.permissions.onAdded.addListener(() => {
+    WatcharrJellyfin.sync().catch((err) => {
+      console.error("[watcharr-scrobbler] Jellyfin setup failed:", err);
+    });
+  });
+}

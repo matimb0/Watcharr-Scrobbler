@@ -332,6 +332,11 @@
     <script src="../i18n/messages.js"></script>
     <script src="../i18n/dom.js"></script>
     <script src="../i18n/index.js"></script>
+    <!-- Service registry: provides WatcharrServices.permissionOrigins, which
+         builds the origins the Jellyfin server / Watcharr instance need to be
+         requested at runtime (see requestHostAccess in options.js). The popup
+         and the history page load it for the same reason. -->
+    <script src="../background/services.js"></script>
     <script src="options.js"></script>
   </body>
 </html>
