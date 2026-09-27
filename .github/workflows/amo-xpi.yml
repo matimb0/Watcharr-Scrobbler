@@ -1,22 +1,21 @@
 # Attach the .xpi signed by Mozilla to an existing GitHub release.
 #
-# Why separate from the release workflow: AMO signs a *listed* version only on
-# approval (minutes to days). release.yml only submits, this one checks whether
-# the signature is available yet.
+# Manual only (Actions -> "Signed XPI" -> Run workflow): it makes ONE attempt
+# per release and stops. There is no schedule and no automatic trigger - run it
+# again by hand once AMO has approved the version.
 #
-# Runs automatically every 2 hours and manually via
-# Actions -> "Signed XPI" -> Run workflow.
+# Why a separate workflow: AMO signs a *listed* version only on approval
+# (minutes to days), so the release workflow cannot attach the file itself.
 #
 # For every public version the AMO API exposes the signed file as `file.url`
 # (GET /api/v5/addons/addon/<id>/versions/<version>/). While the version is
-# still in review it is not listed there (404) -> try again on the next run.
+# still in review it is not listed there (404) -> that release is skipped and
+# logged, nothing is retried.
 # The XPI is renamed to the naming convention from tools/build.mjs.
 
 name: Signed XPI
 
 on:
-  schedule:
-    - cron: "17 */2 * * *"
   workflow_dispatch:
 
 # contents: write – attach an asset to a release
@@ -35,8 +34,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Attach signed XPI to releases without one
+        # GH_REPO tells gh which repository to work on. Without a checkout step
+        # there is no .git directory, so `gh release upload` would fail with
+        # "fatal: not a git repository" - `gh api` only works because it takes
+        # the repository from the explicit URL.
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
 
@@ -59,7 +63,7 @@ jobs:
             fi
 
             if [ -z "$url" ]; then
-              echo "$tag: version $version is not approved on AMO yet - retry later."
+              echo "$tag: version $version is not approved on AMO yet - skipped, run again later."
               continue
             fi
 
