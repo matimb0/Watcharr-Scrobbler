@@ -34,6 +34,36 @@
   }
 
   /**
+   * Title search for the content scripts, the popup and the history page.
+   *
+   * It runs against TMDB DIRECTLY (see background/tmdb.js) – Watcharr would
+   * only proxy the same TMDB call with a hardcoded English language – and adds
+   * what TMDB cannot know: whether a result is already on the user's Watcharr
+   * list (that is what keeps an import from creating a duplicate, and it is the
+   * tie-break when several same-titled entries exist).
+   *
+   * The answer keeps Watcharr's search shape (`{ ok, data: { results } }`), so
+   * every caller works unchanged.
+   */
+  async function searchTitles(query, searchType) {
+    try {
+      const results = await WatcharrHistoryMatcher.searchOnline(
+        query,
+        searchType,
+      );
+      return { ok: true, data: { results } };
+    } catch (err) {
+      return {
+        ok: false,
+        error: err.message || String(err),
+        errorCode: (err && err.userCode) || null,
+        // A TMDB configuration problem is not an auth problem of Watcharr.
+        tmdbStatus: (err && err.tmdbStatus) || null,
+      };
+    }
+  }
+
+  /**
    * What is playing in the focused service tab? Resolved through the central
    * watcher, which also guarantees that a content script runs in that tab (a
    * plain tabs.sendMessage fails in tabs opened before the extension).
@@ -106,7 +136,7 @@
 
     // -- Watcharr calls from the content scripts / popup --------------------
     "watcharr:search": (msg) =>
-      withClient((c) => c.search(msg.query || "", msg.searchType || "multi")),
+      searchTitles(msg.query || "", msg.searchType || "multi"),
 
     "watcharr:addWatched": (msg) =>
       withClient((c) =>

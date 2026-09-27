@@ -22,7 +22,7 @@ importScripts(
   "../content/history-file/export.js",
   "watcharr-client.js",
   "jellyfin.js",
-  "tmdb-site.js",
+  "tmdb.js",
   "history/matcher.js",
   "history/loader.js",
   "history/exporter.js",

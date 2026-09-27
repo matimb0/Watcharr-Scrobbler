@@ -216,7 +216,7 @@
 
   /**
    * Value for a NAME out of an episode index (`Map<key, value>`, built with
-   * `addEpisodeToIndex`, see tmdb-site.js and matcher.js), or null.
+   * `addEpisodeToIndex`, see tmdb.js and matcher.js), or null.
    *
    *  1. the normalized name,
    *  2. the position the name means ("Pilot", "Staffel 3 Folge 7"),

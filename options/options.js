@@ -42,6 +42,7 @@ const els = {
   generalBanner: $("#general-banner"),
   jellyfinBanner: $("#jellyfin-banner"),
   jellyfinUrl: $("#jellyfinUrl"),
+  tmdbKey: $("#tmdbKey"),
   historyBtn: $("#historyBtn"),
   methodField: $("#methodField"),
   providerGroup: $("#providerGroup"),
@@ -325,6 +326,7 @@ async function load() {
   els.thresholdValue.value = s.threshold + " %";
   els.stepsThreshold.textContent = s.threshold || 90;
   if (els.jellyfinUrl) els.jellyfinUrl.value = s.jellyfinUrl || "";
+  if (els.tmdbKey) els.tmdbKey.value = s.tmdbKey || "";
   await updateStepText(s.threshold || 90);
 
   if (configured) {
@@ -657,6 +659,24 @@ async function saveJellyfinUrl() {
   showJellyfinBanner("success", await t("settings.jellyfinSaved"));
 }
 
+/**
+ * Stores the optional TMDB API key. Empty means "use the key shipped with the
+ * add-on" (see background/tmdb.js), so clearing the field is a valid choice.
+ */
+async function saveTmdbKey() {
+  if (!els.tmdbKey) return;
+  const resp = await browser.runtime.sendMessage({
+    type: "watcharr:saveSettings",
+    settings: { tmdbKey: els.tmdbKey.value.trim() },
+  });
+  showGeneralBanner(
+    resp && resp.ok ? "success" : "error",
+    await t(
+      resp && resp.ok ? "settings.tmdbKeySaved" : "settings.error.generic",
+    ),
+  );
+}
+
 els.historyBtn.addEventListener("click", () => {
   browser.tabs.create({ url: browser.runtime.getURL("history/history.html") });
 });
@@ -701,6 +721,13 @@ els.language.addEventListener("change", async () => {
 els.password.addEventListener("keydown", (e) => {
   if (e.key === "Enter") login();
 });
+
+if (els.tmdbKey) {
+  els.tmdbKey.addEventListener("change", saveTmdbKey);
+  els.tmdbKey.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") els.tmdbKey.blur();
+  });
+}
 
 if (els.jellyfinUrl) {
   els.jellyfinUrl.addEventListener("change", saveJellyfinUrl);

@@ -14,6 +14,9 @@
     threshold: 90, // % watched before a title counts as "finished"
     language: "", // "" = no explicit choice -> use the browser language
     jellyfinUrl: "", // self-hosted server, normalized; "" = service inactive
+    // Optional TMDB API key of the user. Empty = the key bundled with the
+    // extension is used (see background/tmdb.js).
+    tmdbKey: "",
   };
 
   /** Current settings with the defaults filled in. */

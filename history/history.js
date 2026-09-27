@@ -71,6 +71,11 @@ const ERROR_KEYS = {
   file_unreadable: "history.error.fileUnreadable",
   file_empty: "history.error.fileEmpty",
   tmdb_not_found: "history.error.tmdbNotFound",
+  tmdb_no_key: "history.error.tmdbNoKey",
+  tmdb_auth: "history.error.tmdbAuth",
+  tmdb_rate_limit: "history.error.tmdbRateLimit",
+  tmdb_unreachable: "history.error.tmdbUnreachable",
+  tmdb_failed: "history.error.tmdbFailed",
   // Jellyfin (content/jellyfin/jellyfin-content.js)
   jellyfin_not_logged_in: "history.error.jellyfinNotLoggedIn",
   jellyfin_unavailable: "history.error.jellyfinUnavailable",
@@ -1594,31 +1599,16 @@ function downloadTextFile(filename, text, mime) {
   setTimeout(() => URL.revokeObjectURL(url), 60000);
 }
 
-/** The TMDB enrichment can only run with a configured Watcharr connection:
- *  the TMDB search is proxied by the Watcharr instance. Keeps the checkbox in
- *  sync with the connection state when the dialog is opened. */
+/** The TMDB enrichment asks the TMDB API directly, so it needs no Watcharr
+ *  connection – it only needs a usable TMDB API key (bundled with the add-on,
+ *  or entered in the settings). Keeps the checkbox in sync whenever the export
+ *  dialog is opened. */
 async function syncExportEnrichOption() {
   if (!els.exportEnrich) return;
-  let configured = false;
-  try {
-    const state = await browser.runtime.sendMessage({
-      type: "watcharr:getState",
-    });
-    configured = !!(
-      state &&
-      state.ok &&
-      state.settings &&
-      state.settings.configured
-    );
-  } catch (_) {
-    /* no answer – keep the option disabled and explain why */
-  }
-  els.exportEnrich.disabled = !configured;
-  if (!configured) els.exportEnrich.checked = false;
+  els.exportEnrich.disabled = false;
+  els.exportEnrich.checked = true;
   if (els.exportEnrichHint) {
-    els.exportEnrichHint.textContent = ts(
-      configured ? "history.exportEnrichHint" : "history.exportNoWatcharr",
-    );
+    els.exportEnrichHint.textContent = ts("history.exportEnrichHint");
   }
 }
 

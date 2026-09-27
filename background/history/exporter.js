@@ -3,8 +3,8 @@
  *
  * The rows themselves come from the service crawl (background/history/index.js)
  * and never touch Watcharr – this module only ENRICHES them, by searching each
- * title through the user's Watcharr instance (which proxies TMDB). That makes
- * the exported file importable by other services.
+ * title on TMDB directly (background/tmdb.js, in the display language). That
+ * makes the exported file importable by other services.
  */
 "use strict";
 
@@ -22,7 +22,7 @@
    * "title|year|type", so every episode of the same series shares a lookup and
    * a long history only needs a handful of requests.
    */
-  function lookupRow(row, client, cache) {
+  function lookupRow(row, cache) {
     const key = normTitle(row.title) + "|" + (row.year || "") + "|" + row.type;
     if (cache.has(key)) return cache.get(key);
 
@@ -38,8 +38,7 @@
       )) {
         let results = [];
         try {
-          const data = await client.search(query, type);
-          results = (data && data.results) || [];
+          results = await matcher.searchOnline(query, type);
         } catch (err) {
           // A single failed lookup must not abort the whole export – the row
           // simply stays without TMDB data.
@@ -74,7 +73,7 @@
    * @param options { shouldStop(), onProgress(processed, matched) }
    * @returns { processed, matched }
    */
-  async function enrich(rows, client, options) {
+  async function enrich(rows, options) {
     const opts = options || {};
     const shouldStop = opts.shouldStop || (() => false);
     const onProgress = opts.onProgress || (() => {});
@@ -87,7 +86,7 @@
     const worker = async () => {
       while (next < rows.length && !shouldStop()) {
         const row = rows[next++];
-        const match = await lookupRow(row, client, cache);
+        const match = await lookupRow(row, cache);
         if (shouldStop()) return;
         applyMatch(row, match);
         if (match) matched++;

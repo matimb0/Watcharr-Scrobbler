@@ -170,8 +170,32 @@
       </section>
 
       <section class="card">
-        <h2 data-i18n="settings.scrobbling">Scrobbling</h2>
+        <h2 class="card-title">
+          <span data-i18n="settings.tmdbSection">TMDB</span>
+          <span class="badge" data-i18n="settings.optional">Optional</span>
+        </h2>
 
+        <div class="field">
+          <label for="tmdbKey" data-i18n="settings.tmdbKeyLabel"
+            >TMDB API key</label
+          >
+          <input
+            type="password"
+            id="tmdbKey"
+            autocomplete="off"
+            spellcheck="false"
+            placeholder="API key / Read Access Token"
+          />
+          <p class="hint" data-i18n-html="settings.tmdbKeyHint">
+            Titles, seasons and episode names are fetched from TMDB in the
+            language selected above. Leave empty to use the key shipped with the
+            add-on.
+          </p>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2 data-i18n="settings.scrobbling">Scrobbling</h2>
         <div class="toggle-row">
           <div>
             <strong data-i18n="settings.scrobblingEnabled"

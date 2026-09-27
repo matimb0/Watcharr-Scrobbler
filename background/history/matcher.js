@@ -144,23 +144,58 @@
   }
 
   /**
-   * Watcharr/TMDB match for one entry (or null when nothing was found). Runs
+   * Searches TMDB directly (see background/tmdb.js) and adds what TMDB cannot
+   * know: whether a candidate is already on the user's Watcharr list, with which
+   * status (that is what keeps the import from creating a duplicate and what
+   * makes the "already on my list" tie-break work).
+   *
+   * The result shape is exactly Watcharr's search shape, so every consumer of
+   * the old search keeps working unchanged.
+   */
+  async function searchOnline(query, searchType) {
+    const results = await WatcharrTmdb.search(query, searchType);
+    return enrichWithListState(results);
+  }
+
+  // Candidates asked for their list state at most (see enrichWithListState).
+  const MAX_ENRICHED_RESULTS = 3;
+
+  /**
+   * Fills `watched` into the candidates a picker may choose between: the ones
+   * carrying the searched title (a different-titled candidate cannot win a
+   * comparison based on the title anyway), capped so a broad search cannot
+   * trigger dozens of requests.
+   */
+  async function enrichWithListState(results) {
+    if (!results.length) return results;
+    const settings = await getSettings();
+    if (!settings.watcharrUrl || !settings.token) return results;
+
+    const client = new WatcharrClient(settings);
+    await Promise.all(
+      results.slice(0, MAX_ENRICHED_RESULTS).map(async (result) => {
+        const tmdbId = Number(result.ids && result.ids.tmdb);
+        if (!Number.isInteger(tmdbId) || tmdbId <= 0) return;
+        const contentType = result.type === "tmdb_movie" ? "movie" : "tv";
+        const watched = await client.getWatchedState(tmdbId, contentType);
+        if (watched && watched.id) result.watched = watched;
+      }),
+    );
+    return results;
+  }
+
+  /**
+   * TMDB match for one entry (or null when nothing was found). Runs
    * `buildQueries` in order and returns the first match. A single failing
    * query variant only skips that variant – the error is re-thrown when NO
    * variant produced a match, so connection/auth problems stay visible.
    */
   async function searchWatcharr(title, year, isTv) {
-    const settings = await getSettings();
-    if (!settings.watcharrUrl || !settings.token) {
-      throw userError("not_configured", "Watcharr is not configured.");
-    }
-    const client = new WatcharrClient(settings);
     let failed = null;
     for (const { query, type } of buildQueries(title, year, isTv)) {
       let results = [];
       try {
-        const data = await client.search(query, type);
-        results = (data && data.results) || [];
+        results = await searchOnline(query, type);
       } catch (err) {
         logErr("searchWatcharr: search failed for", query, "->", err.message);
         if (!failed) failed = err;
@@ -255,12 +290,10 @@
       push(name);
     }
 
-    const client = new WatcharrClient(await getSettings());
     for (const query of queries) {
       let results = [];
       try {
-        const data = await client.search(query, "multi");
-        results = (data && data.results) || [];
+        results = await searchOnline(query, "multi");
       } catch (err) {
         // One failed query must not abort the whole lookup.
         logErr(
@@ -322,11 +355,11 @@
   function clearCache() {
     watchedEpisodesCache.clear();
     seasonEpisodesCache.clear();
-    seriesEpisodeIndexCache.clear();
     seriesSeasonsCache.clear();
     showCache.clear();
     movieWatchedCache.clear();
-    if (globalThis.WatcharrTmdbSite) globalThis.WatcharrTmdbSite.clearCache();
+    if (globalThis.WatcharrTmdb) globalThis.WatcharrTmdb.clearCache();
+    clearContentCache();
   }
 
   // Ceiling for all Watcharr requests at once: the seasons of one series are
@@ -340,22 +373,12 @@
     if (seasonEpisodesCache.has(key)) return seasonEpisodesCache.get(key);
 
     const pending = (async () => {
-      const client = new WatcharrClient(await getSettings());
-      const data = await watcharrLimit(() =>
-        client.getSeasonDetails(tmdbId, seasonNumber),
-      );
-      // The season route hands through TMDB's own response, so the episode
-      // fields are snake_case (`episode_number`, `name`) – camelCase is only
-      // read as a fallback in case a Watcharr version reforms them.
-      const episodes = (data && (data.episodes || data.Episodes)) || [];
+      const episodes = await WatcharrTmdb.seasonEpisodes(tmdbId, seasonNumber);
+      if (!episodes) return null;
       const titles = new Map();
       for (const ep of episodes) {
-        if (!ep) continue;
-        const number =
-          ep.episode_number != null ? ep.episode_number : ep.episodeNumber;
-        const name = ep.name || ep.episodeName;
-        if (number == null || !name) continue;
-        titles.set(Number(number), name);
+        if (!ep || ep.episode == null || !ep.title) continue;
+        titles.set(Number(ep.episode), ep.title);
       }
       return titles;
     })().catch((err) => {
@@ -374,68 +397,11 @@
     return pending;
   }
 
-  /** Name of one episode from TMDB (through Watcharr), or null. */
+  /** Name of one episode from TMDB, or null. */
   async function getEpisodeName(tmdbId, seasonNumber, episodeNumber) {
     const titles = await getSeasonEpisodes(tmdbId, seasonNumber);
     if (!titles) return null;
     return titles.get(Number(episodeNumber)) || null;
-  }
-
-  /**
-   * Episode index of one series: normalized episode NAME -> { season, episode }.
-   * Built once per TMDB id from every season of the show (TMDB, through
-   * Watcharr), so the names of the seasons are shared with the episode-name
-   * cache above.
-   *
-   * The seasons are queried in PARALLEL (see WatcharrUtil.mapWithConcurrency) –
-   * one request per season is unavoidable, but they must not run one after
-   * another.
-   *
-   * A title carried by MORE than one episode is dropped from the index, so an
-   * ambiguous name can never resolve to a guessed episode. Lookups go through
-   * `lookupName`, which also accepts a close spelling.
-   */
-  const seriesEpisodeIndexCache = new Map(); // tmdbId -> Promise<Map|null>
-
-  function getSeriesEpisodeIndex(tmdbId) {
-    if (seriesEpisodeIndexCache.has(tmdbId)) {
-      return seriesEpisodeIndexCache.get(tmdbId);
-    }
-
-    const pending = (async () => {
-      const { ok, show } = await getShow(tmdbId);
-      if (!ok) return null;
-      const seasons = seasonSummary(show);
-      const index = new Map();
-      const ambiguous = new Set();
-      await mapWithConcurrency(seasons, SEASON_CONCURRENCY, async (season) => {
-        const titles = await getSeasonEpisodes(tmdbId, season.number);
-        if (!titles) return;
-        for (const [episodeNumber, name] of titles) {
-          // Indexed under the episode name AND its position (see util.js), so a
-          // row whose service labels the episode differently still matches.
-          addEpisodeToIndex(
-            index,
-            ambiguous,
-            episodeKeys(name, season.number, Number(episodeNumber)),
-            { season: season.number, episode: Number(episodeNumber) },
-          );
-        }
-      });
-      for (const key of ambiguous) index.delete(key);
-      return index;
-    })().catch((err) => {
-      logErr(
-        "getSeriesEpisodeIndex: error for tmdbId",
-        tmdbId,
-        "->",
-        err.message,
-      );
-      return null;
-    });
-
-    seriesEpisodeIndexCache.set(tmdbId, pending);
-    return pending;
   }
 
   /**
@@ -651,32 +617,31 @@
       return true;
     }
 
-    // 3. + 4. by name, over TMDB's episode lists
-    const Tmdb = globalThis.WatcharrTmdbSite;
+    // 3. by name, over TMDB's episode lists (API with a key, else TMDB's
+    //    website – see background/tmdb.js). The extension's DISPLAY language
+    //    comes first, so names arrive in the language the user reads; the
+    //    language the service reported is the second try, because a Netflix
+    //    profile can be set to a different language than the UI.
     const probe = episodeProbeName(item);
     // A very short name is not a usable key ("Pilot" is fine, "1" is not).
-    if (Tmdb && normName(probe).length >= 3) {
+    if (normName(probe).length >= 3) {
       const seasonNumbers = seasonsToSearch(seasons);
       const tmdbId = item.match.tmdbId;
-      const first = Tmdb.languageTag(
-        item.providerLanguage || Tmdb.uiLanguage(),
-      );
-      const fallback = Tmdb.languageTag(Tmdb.defaultLanguage || "en-US");
+      const languages = [];
+      const addLanguage = async (value) => {
+        const tag = WatcharrTmdb.languageTag(value);
+        if (tag && languages.indexOf(tag) === -1) languages.push(tag);
+      };
+      await addLanguage(await WatcharrTmdb.displayLanguage());
+      await addLanguage(item.providerLanguage);
 
-      const languages = [first];
-      // The default language only adds a chance when the localized list had
-      // nothing but generic labels (see the function comment).
-      if (fallback !== first) languages.push(fallback);
-
-      let answered = false;
       for (const language of languages) {
-        const result = await Tmdb.findEpisode(
+        const result = await WatcharrTmdb.findEpisode(
           tmdbId,
           seasonNumbers,
           language,
           probe,
         );
-        answered = answered || result.responses > 0;
         if (result.hit) {
           reportEpisode(item, result.hit);
           log(
@@ -688,15 +653,13 @@
           );
           return true;
         }
-        if (result.hasRealTitles || !result.responses) break;
+        // Only a season list with GENERIC labels ("Folge 4") leaves room for
+        // another language: where real names were seen, the name simply is not
+        // part of this series, and a second round would find the same.
+        if (result.hasRealTitles || !result.responses) return false;
       }
-      // TMDB's own pages were read: Watcharr serves the same catalogue, so the
-      // name fallback below cannot find more than they did.
-      if (answered) return false;
     }
-
-    // 5. safety net: the episode names Watcharr serves
-    return resolveEpisodeFromTitle(item, probe);
+    return false;
   }
 
   /** Writes a resolved episode onto the item and marks where it came from. */
@@ -704,34 +667,6 @@
     item.season = hit.season;
     item.episode = hit.episode;
     item.episodeSource = source || "name";
-  }
-
-  /**
-   * Last resort when TMDB's website is not usable (host permission declined, an
-   * outage): the same name lookup against the episode names Watcharr serves
-   * (TMDB en-US). Positional names never reach this point – they are answered
-   * from the season list before any request (see positionalEpisode).
-   *
-   * Every season of a series is queried once and in PARALLEL (cached, and reset
-   * per history load), and the index is shared by all rows of that series.
-   */
-  async function resolveEpisodeFromTitle(item, probe) {
-    const name = String(probe == null ? episodeProbeName(item) : probe);
-    // A one-character title ("Pilot" is fine, "1" is not) is not a usable key.
-    if (normName(name).length < 3) return false;
-
-    const index = await getSeriesEpisodeIndex(item.match.tmdbId);
-    const hit = index && lookupName(index, name);
-    if (!hit) return false;
-
-    reportEpisode(item, hit);
-    log(
-      "resolveEpisodeFromTitle:",
-      JSON.stringify(item.title),
-      JSON.stringify(item.episodeTitle),
-      "-> S" + hit.season + "E" + hit.episode,
-    );
-    return true;
   }
 
   /**
@@ -919,6 +854,7 @@
     pickBest,
     pickByTmdbId,
     resultToMatch,
+    searchOnline,
     resolveMatchByTmdbId,
     resolveItemEpisodeStatus,
     resolveEpisodeFromDate,

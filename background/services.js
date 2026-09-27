@@ -193,9 +193,10 @@
     // primevideo.com also covers the Prime Video API hosts
     // (atv-ps.primevideo.com, atv-ps-<region>.primevideo.com).
     "*://*.primevideo.com/*",
-    // TMDB's website: episode names in the user's language. Needed because
-    // Watcharr asks TMDB with a hardcoded language (en-US), while the services
-    // report localized episode titles (see background/tmdb-site.js).
+    // TMDB API (`api.themoviedb.org`, covered by this pattern): title searches,
+    // seasons and localized episode names. Needed because Watcharr asks TMDB
+    // with a hardcoded language (en-US), while the services report localized
+    // episode titles (see background/tmdb.js).
     "*://*.themoviedb.org/*",
     "*://*.plex.tv/*", // Plex login (plex.tv OAuth)
   ];
@@ -258,7 +259,7 @@
       }
     };
     // The fixed hosts are always needed, no matter which service is loaded
-    // (e.g. TMDB's website for episode names, see background/tmdb-site.js) –
+    // (e.g. the TMDB API for title/episode lookups, see background/tmdb.js) –
     // `only` therefore restricts the SERVICE patterns, not these.
     STATIC_HOSTS.forEach(add);
     for (const svc of list) {

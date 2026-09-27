@@ -199,7 +199,7 @@
   async function enrich(rawItems) {
     const enriched = [];
     // Language this Netflix profile reports its titles in – the episode name is
-    // later looked up in that language (background/tmdb-site.js), so a delisted
+    // later looked up in that language (background/tmdb.js), so a delisted
     // title, which leaves nothing but the localized episode title, can still be
     // resolved.
     const otherLanguages = WatcharrNetflixMetadata.otherLanguages();

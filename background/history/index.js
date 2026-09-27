@@ -121,7 +121,7 @@ const WatcharrHistory = (() => {
       // (shown as a warning on the row, see history/history.js).
       providerNote: entry.providerNote || null,
       // Language the service reported this entry's title in – the episode name
-      // is looked up in that language (see background/tmdb-site.js).
+      // is looked up in that language (see background/tmdb.js).
       providerLanguage: entry.providerLanguage || null,
       // true when season/episode had to be derived (not reported by the service)
       episodeDerived: false,
@@ -546,20 +546,8 @@ const WatcharrHistory = (() => {
       );
     }
 
-    // Fail fast: without a Watcharr connection no TMDB lookup is possible.
-    // Better than crawling the whole history first and failing afterwards.
-    let client = null;
-    if (enrich) {
-      const settings = await WatcharrSettings.get();
-      if (!settings.watcharrUrl || !settings.token) {
-        throw userError(
-          "not_configured",
-          "Watcharr is not configured – TMDB data cannot be added.",
-        );
-      }
-      client = new WatcharrClient(settings);
-    }
-
+    // No Watcharr connection is needed for the enrichment any more: the TMDB
+    // lookup runs directly (background/tmdb.js, in the display language).
     const svc = WatcharrServices.byId(serviceId) || WatcharrServices.list[0];
     exportRunning = true;
     exportCount = 0;
@@ -604,7 +592,7 @@ const WatcharrHistory = (() => {
 
       if (enrich && rows.length && !cancelRequested) {
         exportPhase = "match";
-        const result = await exporter.enrich(rows, client, {
+        const result = await exporter.enrich(rows, {
           shouldStop: () => cancelRequested,
           onProgress: (processed, matched) => {
             exportProcessed = processed;

@@ -32,7 +32,7 @@
       "content/history-file/export.js",
       "background/watcharr-client.js",
       "background/jellyfin.js",
-      "background/tmdb-site.js",
+      "background/tmdb.js",
       "background/history/matcher.js",
       "background/history/loader.js",
       "background/history/exporter.js",

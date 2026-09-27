@@ -16,6 +16,15 @@
  *  of shown raw. */
 const clientError = WatcharrErrors.create;
 
+/**
+ * Short-lived cache of content items (`/content/tv|movie/:id`): one history load
+ * asks for the same series once per row, and the search enrichment asks for the
+ * same id again. Importing invalidates it (see clearContentCache), so a status
+ * that was just changed is never served stale.
+ */
+const contentCache = new Map(); // "tv|movie:id" -> { at, value }
+const CONTENT_CACHE_MS = 60000;
+
 class WatcharrClient {
   constructor(settings) {
     this.url = (settings.watcharrUrl || "").replace(/\/+$/, "");
@@ -201,9 +210,47 @@ class WatcharrClient {
    * episodes (`watched.watchedEpisodes`) – the only Watcharr API with
    * episode-level granularity (search and the /watched list only carry
    * `watchingSeason`, i.e. the *last* watched episode).
+   *
+   * `seasons` carries TMDB's own overview (number + episode count) – the
+   * extension uses it as the fallback for the season list when TMDB itself
+   * cannot be asked (no API key and the website is unreachable).
    */
   getWatchedShow(tmdbId) {
-    return this._request("GET", "/content/tv/" + Number(tmdbId));
+    return this.getContentItem(tmdbId, "tv");
+  }
+
+  /**
+   * TMDB content item of the user's instance (TV or movie). This is Watcharr's
+   * job: it knows whether the title is on the list, with which status and which
+   * episodes are watched – TMDB itself has none of that.
+   *
+   * Cached briefly: a single history load asks for the same series with every
+   * row, and the search enrichment asks for the same id again.
+   */
+  getContentItem(tmdbId, contentType) {
+    const type = contentType === "movie" ? "movie" : "tv";
+    const key = type + ":" + Number(tmdbId);
+    const hit = contentCache.get(key);
+    if (hit && Date.now() - hit.at < CONTENT_CACHE_MS) return hit.value;
+    const value = this._request(
+      "GET",
+      "/content/" + type + "/" + Number(tmdbId),
+    );
+    contentCache.set(key, { at: Date.now(), value });
+    return value;
+  }
+
+  /**
+   * The `watched` entry of a title, or null: `{ id, status, … }`. Used to fill
+   * in what a TMDB search cannot know (see getContentItem).
+   */
+  async getWatchedState(tmdbId, contentType) {
+    try {
+      const item = await this.getContentItem(tmdbId, contentType);
+      return (item && item.watched) || null;
+    } catch (_) {
+      return null;
+    }
   }
 
   /**
@@ -214,17 +261,18 @@ class WatcharrClient {
   getActivity(watchedId) {
     return this._request("GET", "/activity/" + Number(watchedId));
   }
+}
 
-  /**
-   * Season details from TMDB (through Watcharr), including the episode list
-   * with the episode NAMES (`episodes[].name`). The watched entry itself only
-   * stores season/episode numbers, so this is the only source for a title.
-   */
-  getSeasonDetails(tmdbId, seasonNumber) {
-    return this._request(
-      "GET",
-      "/content/tv/" + Number(tmdbId) + "/season/" + Number(seasonNumber),
-    );
+/**
+ * Drops the cached content items of one or more TMDB ids (all media types) –
+ * called after an import/update so the next read sees the new state instead of
+ * the cached one.
+ */
+function clearContentCache(tmdbIds) {
+  const wanted = new Set((tmdbIds || []).map((id) => Number(id)));
+  for (const key of [...contentCache.keys()]) {
+    const id = Number(key.split(":")[1]);
+    if (!wanted.size || wanted.has(id)) contentCache.delete(key);
   }
 }
 

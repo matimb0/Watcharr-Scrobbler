@@ -13,7 +13,10 @@ integrated as services.
 
 - Automatically detects what is currently playing on Netflix, Prime Video or
   Jellyfin (movie or series, including season & episode).
-- Searches for the title via your Watcharr instance (TMDB search) and adds it to your watchlist.
+- Searches for the title on **TMDB** (in the language selected in the settings)
+  and adds it to your Watcharr watchlist. Whether a title is already on your
+  list, which episodes you watched and every entry the add-on writes come from
+  your Watcharr instance.
   For Jellyfin the TMDB ID reported by the server is used directly when available.
 - While you are watching, the entry remains **WATCHING**.
 - Once a movie or episode reaches the configurable threshold,
@@ -30,7 +33,8 @@ integrated as services.
 ## Installation
 
 > **Note regarding permissions:** The manifest requests access to the
-> service hosts at runtime.
+> service hosts, to `api.themoviedb.org` (titles, seasons and episode names) and
+> optionally to your self-hosted services at runtime.
 
 **Firefox**
 
@@ -74,7 +78,11 @@ integrated as services.
    that session (access token + user from the web client), so no second login
    and no API key is needed. The content script is registered for exactly that
    server and injected into already-open Jellyfin tabs.
-6. Open Netflix, Prime Video or your Jellyfin server and get started 🍿
+6. **TMDB (optional):** All titles, seasons and episode names are fetched from
+   the **TMDB API** directly, in the language selected under “General”. The
+   add-on ships with a TMDB API key, so nothing has to be configured; if you
+   prefer your own key (it is used instead), enter it in the “TMDB” section.
+7. Open Netflix, Prime Video or your Jellyfin server and get started 🍿
 
 You can see the status and progress at any time in the **Popup**.
 
@@ -109,17 +117,17 @@ imported into Watcharr. Choose **CSV** or **JSON**:
 | `watchedAt`                                   | Watch date/time (ISO-8601, UTC)                             |
 | `tmdbId`, `tmdbType`, `tmdbTitle`, `tmdbYear` | Added optionally (see below)                                |
 
-With **“Add TMDB data via Watcharr”** (enabled by default) every entry is
-additionally matched against TMDB **through your Watcharr instance** – the
-identical entries of a series share one lookup. The resulting `tmdbId` +
+With **“Add TMDB data”** (enabled by default) every entry is additionally
+matched against the **TMDB API** – the identical entries of a series share one
+lookup. The resulting `tmdbId` +
 `tmdbType` + `season`/`episode` + `watchedAt` combination is what other
 services (Trakt, Simkl, Letterboxd, …) expect for an import, so the file can be
 handed over there directly. Entries that cannot be matched keep empty TMDB
 columns and can still be imported by title/year.
 
 The export crawls the whole history, so it can take a moment; progress is shown
-in the dialog and the export can be aborted at any time. Without the TMDB
-option the export needs no Watcharr connection at all.
+in the dialog and the export can be aborted at any time. The export needs no
+Watcharr connection at all – with or without the TMDB option.
 
 <br>
 
