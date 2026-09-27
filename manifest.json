@@ -33,6 +33,7 @@
       "background/watcharr-client.js",
       "background/jellyfin.js",
       "background/tmdb.js",
+      "background/match-cache.js",
       "background/history/matcher.js",
       "background/history/loader.js",
       "background/history/exporter.js",

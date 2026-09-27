@@ -226,14 +226,9 @@ const WatcharrHistory = (() => {
           : "TMDB ID " + item.tmdbHint.tmdbId + " not found in Watcharr";
         item.matchErrorCode = item.match ? null : "tmdb_not_found";
       } else {
-        // Title/year match through the typed Watcharr search (see
-        // background/history/matcher.js – a year only filters in typed
-        // searches, so "multi" is not used for the first attempt).
-        item.match = await matcher.searchWatcharr(
-          item.title,
-          item.year,
-          item.isTv,
-        );
+        // Title/year match – the persistent cache first, only a miss searches
+        // TMDB (see background/match-cache.js and matcher.matchTitle).
+        item.match = await matcher.matchTitle(item.title, item.year, item.isTv);
         item.matchError = item.match ? null : "no match in Watcharr";
         item.matchErrorCode = item.match ? null : "no_match";
       }
@@ -486,6 +481,10 @@ const WatcharrHistory = (() => {
     }
     // Episode status for the (possibly new) match (display only).
     await matcher.resolveItemEpisodeStatus(item);
+    // The user's decision goes into the persistent cache: the next load needs
+    // neither a TMDB search nor a derivation for this title
+    // (see background/match-cache.js).
+    await matcher.rememberDecision(item);
     // A new match is a new state: reset the import status so the row becomes
     // selectable again when the new match is not in Watcharr yet.
     item.status = "pending";

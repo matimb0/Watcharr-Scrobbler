@@ -18,6 +18,11 @@ integrated as services.
   list, which episodes you watched and every entry the add-on writes come from
   your Watcharr instance.
   For Jellyfin the TMDB ID reported by the server is used directly when available.
+  Every resolved match is remembered in a local **cache** (whether it came from
+  the automatic matching or from a manual correction), so the same title is
+  matched only once and later loads need no TMDB search at all. Only what
+  belongs to the user – whether a title is on the list, which episodes are
+  watched – is always fetched fresh from Watcharr.
 - While you are watching, the entry remains **WATCHING**.
 - Once a movie or episode reaches the configurable threshold,
   it is marked as watched in Watcharr (**FINISHED**).

@@ -21,37 +21,27 @@
    * TMDB match of one export row. `cache` holds one Promise per
    * "title|year|type", so every episode of the same series shares a lookup and
    * a long history only needs a handful of requests.
+   *
+   * The lookup goes through the matcher, which keeps the PERSISTENT cache
+   * (background/match-cache.js) in front of TMDB: a title that was matched in
+   * the history view before is answered without a request.
    */
   function lookupRow(row, cache) {
     const key = normTitle(row.title) + "|" + (row.year || "") + "|" + row.type;
     if (cache.has(key)) return cache.get(key);
 
-    const pending = (async () => {
-      // Same query order as the history matching (typed + year filter first,
-      // see background/history/matcher.js).
-      const isTv = row.type === "tv";
-
-      for (const { query, type } of matcher.buildQueries(
-        row.title,
-        row.year,
-        isTv,
-      )) {
-        let results = [];
-        try {
-          results = await matcher.searchOnline(query, type);
-        } catch (err) {
-          // A single failed lookup must not abort the whole export – the row
-          // simply stays without TMDB data.
-          logErr("lookupRow: search failed for", row.title, "->", err.message);
-          return null;
-        }
-        const match = matcher.resultToMatch(
-          matcher.pickBest(results, row.title, isTv, row.year),
-        );
-        if (match) return match;
-      }
-      return null;
-    })();
+    const pending = matcher
+      .matchTitle(row.title, row.year, row.type === "tv", {
+        // The export only wants the TMDB identity – the Watcharr list state is
+        // not part of it and would cost a request per row.
+        fillWatched: false,
+      })
+      .catch((err) => {
+        // A single failed lookup must not abort the whole export – the row
+        // simply stays without TMDB data.
+        logErr("lookupRow: search failed for", row.title, "->", err.message);
+        return null;
+      });
 
     cache.set(key, pending);
     return pending;

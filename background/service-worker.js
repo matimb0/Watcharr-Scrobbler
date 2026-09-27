@@ -23,6 +23,7 @@ importScripts(
   "watcharr-client.js",
   "jellyfin.js",
   "tmdb.js",
+  "match-cache.js",
   "history/matcher.js",
   "history/loader.js",
   "history/exporter.js",

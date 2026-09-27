@@ -8,6 +8,11 @@
  * The API is service-agnostic: a service fills `item.metadata` (title, type,
  * year, season/episode) and then uses the functions here. Jellyfin, which
  * already knows TMDB ids, builds on the search helpers as well.
+ *
+ * The title -> TMDB match itself is NOT done here: the background resolves it
+ * (background/history/matcher.js) and keeps the persistent match cache in front
+ * of TMDB, so a title is only searched once and a manual correction on the
+ * history page applies to the live scrobbling too (see searchAndPick).
  */
 "use strict";
 
@@ -113,6 +118,10 @@
    *  1. typed + year filter (`fyear:` = TMDB first air year, series only),
    *  2. typed without the filter (the known year may be the episode's),
    *  3. "multi" without the filter (exists only under the other medium type).
+   *
+   * Used by the JELLYFIN path, which knows the TMDB id from the server and
+   * therefore searches the result LIST for exactly that id. The other services
+   * let the background resolve their title (see matchToResult/searchAndPick).
    */
   function buildQueries(title, year, type) {
     const name = String(title || "").trim();
@@ -129,28 +138,49 @@
   }
 
   /**
-   * Searches the user's Watcharr instance and returns the best media result
-   * (or null). Runs the queries from `buildQueries` in order, so a title that
-   * only exists under the other medium type is still found.
+   * A match resolved in the background (background/match-cache.js +
+   * background/history/matcher.js) in the shape of a Watcharr search result, so
+   * every consumer of `searchAndPick` stays unchanged.
+   */
+  function matchToResult(match) {
+    const tmdbId = Number(match && match.tmdbId);
+    if (!Number.isInteger(tmdbId) || tmdbId <= 0) return null;
+    return {
+      ids: { tmdb: tmdbId },
+      type: match.contentType === "movie" ? "tmdb_movie" : "tmdb_tv",
+      name: match.name || null,
+      releaseDate: match.year ? String(match.year) : null,
+      watched: match.watchedId
+        ? { id: match.watchedId, status: match.watchedStatus || null }
+        : null,
+    };
+  }
+
+  /**
+   * Resolves ONE title into the best media result (or null).
+   *
+   * Done in the BACKGROUND (`watcharr:resolve`), which keeps the persistent
+   * match cache in front of TMDB (see background/match-cache.js): a title that
+   * was matched before – automatically, or corrected by hand on the history
+   * page – is answered without a TMDB request, and that correction applies to
+   * the live scrobbling as well.
    */
   async function searchAndPick(title, year, type) {
-    for (const { query, searchType: st } of buildQueries(title, year, type)) {
-      let resp;
-      try {
-        resp = await browser.runtime.sendMessage({
-          type: "watcharr:search",
-          query,
-          searchType: st,
-        });
-      } catch (_) {
-        return null;
-      }
-      if (!resp || !resp.ok) continue;
-      const results = (resp.data && resp.data.results) || [];
-      const best = pickBestMatch(results, { title, year, type });
-      if (best) return best;
+    let resp;
+    try {
+      resp = await browser.runtime.sendMessage({
+        type: "watcharr:resolve",
+        title,
+        year,
+        // NOT `type`: that key already names the MESSAGE (see the router in
+        // background/background.js).
+        mediaType: type,
+      });
+    } catch (_) {
+      return null;
     }
-    return null;
+    if (!resp || !resp.ok) return null;
+    return matchToResult(resp.data && resp.data.match);
   }
 
   /** TMDB id of a Watcharr search result, or null. */
@@ -282,6 +312,7 @@
     pickBestMatch,
     searchType,
     buildQueries,
+    matchToResult,
     searchAndPick,
     resultTmdbId,
     applySearchResult,

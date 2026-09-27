@@ -34,6 +34,20 @@
   }
 
   /**
+   * Error response of a TMDB-backed call. The codes are the ones the history
+   * page knows (see background/tmdb.js); a TMDB problem is not an auth problem
+   * of Watcharr.
+   */
+  function tmdbError(err) {
+    return {
+      ok: false,
+      error: err.message || String(err),
+      errorCode: (err && err.userCode) || null,
+      tmdbStatus: (err && err.tmdbStatus) || null,
+    };
+  }
+
+  /**
    * Title search for the content scripts, the popup and the history page.
    *
    * It runs against TMDB DIRECTLY (see background/tmdb.js) – Watcharr would
@@ -53,13 +67,32 @@
       );
       return { ok: true, data: { results } };
     } catch (err) {
-      return {
-        ok: false,
-        error: err.message || String(err),
-        errorCode: (err && err.userCode) || null,
-        // A TMDB configuration problem is not an auth problem of Watcharr.
-        tmdbStatus: (err && err.tmdbStatus) || null,
-      };
+      return tmdbError(err);
+    }
+  }
+
+  /**
+   * TMDB match of ONE title – the resolution the live scrobbling uses. It goes
+   * through exactly the same code path as the history rows, which means the
+   * PERSISTENT match cache sits in front of TMDB (background/match-cache.js):
+   * a title that was matched once – automatically, or corrected by hand on the
+   * history page – is answered without a TMDB request, and the user's correction
+   * applies to the live scrobbling as well.
+   *
+   * `msg.mediaType` is the medium the service reported ("movie"/"tv"); anything
+   * else is treated as a series, whose search also falls back to a "multi"
+   * search.
+   */
+  async function resolveTitle(msg) {
+    try {
+      const match = await WatcharrHistoryMatcher.matchTitle(
+        msg.title || "",
+        msg.year || null,
+        msg.mediaType !== "movie",
+      );
+      return { ok: true, data: { match } };
+    } catch (err) {
+      return tmdbError(err);
     }
   }
 
@@ -137,6 +170,9 @@
     // -- Watcharr calls from the content scripts / popup --------------------
     "watcharr:search": (msg) =>
       searchTitles(msg.query || "", msg.searchType || "multi"),
+
+    // One title -> one match (persistent cache first, see resolveTitle).
+    "watcharr:resolve": resolveTitle,
 
     "watcharr:addWatched": (msg) =>
       withClient((c) =>

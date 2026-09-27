@@ -190,19 +190,19 @@
    * query variant only skips that variant – the error is re-thrown when NO
    * variant produced a match, so connection/auth problems stay visible.
    */
-  async function searchWatcharr(title, year, isTv) {
+  async function searchTmdb(title, year, isTv) {
     let failed = null;
     for (const { query, type } of buildQueries(title, year, isTv)) {
       let results = [];
       try {
         results = await searchOnline(query, type);
       } catch (err) {
-        logErr("searchWatcharr: search failed for", query, "->", err.message);
+        logErr("searchTmdb: search failed for", query, "->", err.message);
         if (!failed) failed = err;
         continue;
       }
       log(
-        "searchWatcharr:",
+        "searchTmdb:",
         type,
         JSON.stringify(query),
         "->",
@@ -211,18 +211,72 @@
       );
       const match = resultToMatch(pickBest(results, title, isTv, year));
       if (match) {
-        log("searchWatcharr: matched TMDB", match.tmdbId, "via", query);
+        log("searchTmdb: matched TMDB", match.tmdbId, "via", query);
         return match;
       }
     }
     if (failed) throw failed;
     logErr(
-      "searchWatcharr: NO match for",
+      "searchTmdb: NO match for",
       JSON.stringify(title),
       "year",
       year,
       isTv ? "(series)" : "(movie)",
     );
+    return null;
+  }
+
+  /**
+   * Fills the Watcharr list state into a match. This is the ONE part of a match
+   * that must never come from the cache: whether the title is already on the
+   * list – and with which status – changes with every import (see the file
+   * header of background/match-cache.js).
+   *
+   * For a series this is the same `/content/tv/:id` the episode status and the
+   * season list need, so it costs no extra request (both are cached by TMDB id).
+   */
+  async function fillWatchedState(match) {
+    const settings = await getSettings();
+    if (!settings.watcharrUrl || !settings.token) return match;
+    const client = new WatcharrClient(settings);
+    const watched = await client.getWatchedState(
+      match.tmdbId,
+      match.contentType,
+    );
+    if (watched && watched.id) {
+      match.watchedId = watched.id;
+      match.watchedStatus = watched.status || null;
+    }
+    return match;
+  }
+
+  /**
+   * TMDB match of a provider title – the entry point for the history rows and
+   * the file export. The PERSISTENT cache comes first (background/match-cache.js):
+   * a title that was matched once – automatically or by the user in "Change
+   * match" – is answered from there without a single TMDB request, and only a
+   * miss runs `searchTmdb`.
+   *
+   * `options.fillWatched` (default true) adds the Watcharr list state. Callers
+   * that only need the TMDB identity – the file export – skip it.
+   */
+  async function matchTitle(title, year, isTv, options) {
+    const fillWatched = !options || options.fillWatched !== false;
+    const cached = await WatcharrMatchCache.lookupMatch(title, year, isTv);
+    if (cached) {
+      log(
+        "matchTitle:",
+        JSON.stringify(title),
+        "-> cached TMDB",
+        cached.tmdbId,
+      );
+      return fillWatched ? await fillWatchedState(cached) : cached;
+    }
+    const match = await searchTmdb(title, year, isTv);
+    if (match) {
+      await WatcharrMatchCache.storeMatch(title, year, isTv, match);
+      return fillWatched ? await fillWatchedState(match) : match;
+    }
     return null;
   }
 
@@ -576,18 +630,16 @@
    *      exactly this watch time (deterministic, no guessing),
    *   2. a POSITIONAL name ("Pilot", "Folge 7", "Staffel 3 Folge 7"): answered
    *      from Watcharr's season list alone – NO request at all,
-   *   3. the episode NAME in TMDB's episode list, in the language the service
-   *      reported it in (season pages fetched in parallel),
-   *   4. the same name in the default language, but ONLY when the localized list
+   *   3. the PERSISTENT cache: this episode name was already resolved for this
+   *      series (see background/match-cache.js) – an episode's number never
+   *      changes, so nothing is fetched,
+   *   4. the episode NAME in TMDB's episode list, in the extension's display
+   *      language and in the language the service reported (season pages
+   *      fetched in parallel). The second language only runs when the first list
    *      carried nothing but generic labels – TL;DR: one round instead of two
    *      for every row that cannot be resolved anyway (TMDB falls back to the
    *      original episode name per episode, so a real English title is already
-   *      in the localized list when no translation exists),
-   *   5. the episode names Watcharr serves (same TMDB catalogue) – only as a
-   *      safety net when TMDB's website could not be reached at all.
-   *
-   * Steps 3/4 also skip step 5: the same catalogue cannot match where TMDB's own
-   * pages did not, so the extra requests are not spent.
+   *      in the localized list when no translation exists). A hit is cached.
    *
    * Nothing is ever guessed – every step needs an exact (or, for names, uniquely
    * close) match, see the individual functions.
@@ -617,16 +669,29 @@
       return true;
     }
 
-    // 3. by name, over TMDB's episode lists (API with a key, else TMDB's
-    //    website – see background/tmdb.js). The extension's DISPLAY language
-    //    comes first, so names arrive in the language the user reads; the
-    //    language the service reported is the second try, because a Netflix
-    //    profile can be set to a different language than the UI.
+    // 3. by NAME, over TMDB's episode lists. The PERSISTENT cache comes first:
+    //    this episode name was resolved for this series before (by TMDB or by
+    //    the user) and an episode's number never changes – the season pages are
+    //    then not fetched again.
     const probe = episodeProbeName(item);
     // A very short name is not a usable key ("Pilot" is fine, "1" is not).
     if (normName(probe).length >= 3) {
-      const seasonNumbers = seasonsToSearch(seasons);
       const tmdbId = item.match.tmdbId;
+      const known = await WatcharrMatchCache.lookupEpisode(tmdbId, probe);
+      if (known) {
+        reportEpisode(item, known);
+        log(
+          "deriveEpisode:",
+          JSON.stringify(item.title),
+          JSON.stringify(item.episodeTitle),
+          "(cached) -> S" + known.season + "E" + known.episode,
+        );
+        return true;
+      }
+
+      // 4. the episode name in TMDB's episode list, in the language the
+      //    service reported it in (season pages fetched in parallel).
+      const seasonNumbers = seasonsToSearch(seasons);
       const languages = [];
       const addLanguage = async (value) => {
         const tag = WatcharrTmdb.languageTag(value);
@@ -644,6 +709,12 @@
         );
         if (result.hit) {
           reportEpisode(item, result.hit);
+          await WatcharrMatchCache.storeEpisode(
+            tmdbId,
+            probe,
+            result.hit.season,
+            result.hit.episode,
+          );
           log(
             "deriveEpisode:",
             JSON.stringify(item.title),
@@ -667,6 +738,35 @@
     item.season = hit.season;
     item.episode = hit.episode;
     item.episodeSource = source || "name";
+  }
+
+  /**
+   * Keeps the user's decision for later loads ("Change match"): the match they
+   * picked and the numbers they corrected are the best data there is, so they
+   * go into the persistent cache (background/match-cache.js) and the next load
+   * needs neither a TMDB search nor a derivation for this title.
+   *
+   * The episode is stored under the same name the derivation looks up
+   * (`episodeProbeName`, i.e. without a series-name prefix), so both sides
+   * always meet on the same key.
+   */
+  async function rememberDecision(item) {
+    if (!item || !item.match) return;
+    await WatcharrMatchCache.storeMatch(
+      item.title,
+      item.year,
+      item.isTv,
+      item.match,
+    );
+    if (item.isTv && item.season != null && item.episode != null) {
+      // A row without a name has no key – storeEpisode ignores it then.
+      await WatcharrMatchCache.storeEpisode(
+        item.match.tmdbId,
+        episodeProbeName(item),
+        item.season,
+        item.episode,
+      );
+    }
   }
 
   /**
@@ -846,7 +946,7 @@
   }
 
   globalThis.WatcharrHistoryMatcher = {
-    searchWatcharr,
+    matchTitle,
     buildQueries,
     searchType,
     resultYear,
@@ -859,6 +959,7 @@
     resolveItemEpisodeStatus,
     resolveEpisodeFromDate,
     deriveEpisode,
+    rememberDecision,
     getEpisodeName,
     getWatchDates,
     clearCache,
