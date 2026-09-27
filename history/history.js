@@ -65,6 +65,7 @@ const ERROR_KEYS = {
   no_service_response: "history.error.noResponse",
   auth_failed: "history.error.authFailed",
   no_match: "history.error.noMatch",
+  episode_missing: "history.error.episodeMissing",
   create_failed: "history.error.createFailed",
   export_running: "history.error.exportRunning",
   history_busy: "history.error.historyBusy",
@@ -497,6 +498,24 @@ function missingEpisode(it) {
   );
 }
 
+/**
+ * True when this row must NOT be selected/imported: either it is already
+ * transferred, or its season/episode are still unknown (see missingEpisode).
+ *
+ * A row without numbers would only create the series itself
+ * (`importEpisode` -> `episodes: 0`), which is never what the user wants – so
+ * it stays locked until the numbers are assigned ("Change match", which stays
+ * available, or the automatic derivation).
+ */
+function isLocked(it) {
+  return missingEpisode(it);
+}
+
+/** Only rows that are neither transferred nor locked can be imported. */
+function isSelectable(it) {
+  return !isTransferred(it) && !isLocked(it);
+}
+
 /** Locale tag for date/time formatting (follows the UI language). */
 function localeTag() {
   return currentLanguage === "de"
@@ -597,15 +616,19 @@ function rowHtml(it) {
 
   const providerEp = providerEpisodeLine(it);
   const transferred = isTransferred(it);
+  const locked = isLocked(it);
   return (
     '<div class="row' +
     (transferred ? " transferred" : "") +
+    (locked ? " locked" : "") +
     '" data-key="' +
     escapeHtml(it.key) +
     '">' +
-    '<label class="check"><input type="checkbox" class="sel" ' +
+    '<label class="check"' +
+    (locked ? ' title="' + escapeHtml(ts("history.lockedHint")) + '"' : "") +
+    '><input type="checkbox" class="sel" ' +
     (it.selected ? "checked" : "") +
-    (transferred ? " disabled" : "") +
+    (transferred || locked ? " disabled" : "") +
     " /></label>" +
     '<div class="provider">' +
     '<div class="name">' +
@@ -743,7 +766,7 @@ function appendItems(newItems) {
 }
 
 function updateImportButton() {
-  const n = allItems.filter((it) => it.selected && !isTransferred(it)).length;
+  const n = allItems.filter((it) => it.selected && isSelectable(it)).length;
   els.importBtn.disabled = n === 0;
   els.importBtn.textContent = ts("history.importSelected", { count: n });
 }
@@ -1243,7 +1266,7 @@ document.addEventListener("keydown", (e) => {
 
 // -- Selection / Filter ---------------------------------------------------------
 els.selectAllBtn.addEventListener("click", () => {
-  for (const it of allItems) it.selected = !isTransferred(it);
+  for (const it of allItems) it.selected = isSelectable(it);
   render();
 });
 els.selectNoneBtn.addEventListener("click", () => {

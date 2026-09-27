@@ -530,12 +530,22 @@ button:disabled {
 }
 
 /* Rows already transferred: greyed out and not selectable
-   ("Change match" remains possible). */
-.row.transferred {
+   ("Change match" remains possible). The dimming sits on the row's CONTENT,
+   never on the row itself – the action button stays in its normal, clickable
+   look (it is the way out of this state). */
+.row.transferred > .check,
+.row.transferred > .provider,
+.row.transferred > .arrow,
+.row.transferred > .watcharr,
+.row.locked > .check,
+.row.locked > .provider,
+.row.locked > .arrow,
+.row.locked > .watcharr {
   opacity: 0.6;
 }
 
-.row.transferred .check input[type="checkbox"] {
+.row.transferred .check input[type="checkbox"],
+.row.locked .check input[type="checkbox"] {
   cursor: not-allowed;
 }
 

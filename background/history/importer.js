@@ -132,6 +132,16 @@
     if (!item.match) {
       return { status: "skipped", error: "no match", code: "no_match" };
     }
+    // A series row without season/episode is BLOCKED (the page does not offer it
+    // for selection either): importing it would only create the series itself.
+    // The user assigns the numbers via "Change match" first.
+    if (item.isTv && item.season == null && item.episode == null) {
+      return {
+        status: "skipped",
+        error: "Episode number is missing",
+        code: "episode_missing",
+      };
+    }
     return item.isTv ? importEpisode(client, item) : importMovie(client, item);
   }
 
