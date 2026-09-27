@@ -168,6 +168,17 @@ side by side, and the selected ones can be imported with **“Import selected”
 
 <br>
 
+## Privacy
+
+See **[PRIVACY.md](PRIVACY.md)** for the full privacy policy (English + German):
+what data the extension handles, where it is stored, and where it is
+transmitted. Short version: everything stays on your device and goes only to the
+addresses you configured (your Watcharr and Jellyfin instances), plus Netflix,
+Prime Video, TMDB and plex.tv as required for the features. No developer server,
+no analytics, no remote code.
+
+<br>
+
 ## AI Disclosure
 
 > **AI-assisted:** The largest part of this codebase has been personally reviewed and verified. Some parts, however, were written by AI and have not yet been checked by me. A thorough personal review of these parts is planned. The extension currently appears to be working without any errors.
