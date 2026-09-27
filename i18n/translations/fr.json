@@ -220,6 +220,7 @@
     "noEpisodeReasonUnknown": "l'épisode ne fait pas partie des données de série indiquées par le service",
     "episodeMissingHint": "Le service n'a indiqué aucune saison/épisode pour cette entrée : indiquez-les ici pour importer l'épisode.",
     "lockedHint": "Bloqué : attribuez d’abord la saison et l’épisode (via « Modifier la correspondance ») — sinon seule la série serait ajoutée.",
+    "lockedHintNoMatch": "Bloqué : aucune entrée n’a été trouvée pour ce titre — attribuez d’abord la correspondance (via « Modifier la correspondance »).",
     "metadataMovie": "Film",
     "metadataSeries": "Série",
     "metadataPerson": "Personne",

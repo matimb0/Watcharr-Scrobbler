@@ -492,8 +492,9 @@ function episodeDerived(it) {
   return !!(it.isTv && it.episodeDerived);
 }
 
-/** The service itself reported a series entry without season/episode, so the
- *  row can only be imported as the series – the user has to know that. */
+/** The service itself reported a series entry WITHOUT season/episode and the
+ *  automatic derivation found none either, so the row can only be imported as
+ *  the series – the user has to know that. */
 function missingEpisode(it) {
   return !!(
     it.isTv &&
@@ -504,16 +505,25 @@ function missingEpisode(it) {
 }
 
 /**
- * True when this row must NOT be selected/imported: either it is already
- * transferred, or its season/episode are still unknown (see missingEpisode).
+ * True when this row must NOT be selected/imported, because importing it would
+ * write something the user did not ask for:
  *
- * A row without numbers would only create the series itself
- * (`importEpisode` -> `episodes: 0`), which is never what the user wants – so
- * it stays locked until the numbers are assigned ("Change match", which stays
- * available, or the automatic derivation).
+ *  - NO MATCH: there is no Watcharr/TMDB entry to write to at all
+ *    (the importer skips it as `no_match`),
+ *  - season/episode unknown (see missingEpisode): only the series itself would
+ *    be created (`importEpisode` -> `episodes: 0`).
+ *
+ * Both stay locked until the user assigned what is missing through "Change
+ * match" – the one action that always stays available on a locked row.
  */
 function isLocked(it) {
-  return missingEpisode(it);
+  return !it.match || missingEpisode(it);
+}
+
+/** Tooltip of the disabled checkbox of a locked row – names the reason, so the
+ *  user knows which part is missing (a match, or the season/episode). */
+function lockedHint(it) {
+  return ts(it.match ? "history.lockedHint" : "history.lockedHintNoMatch");
 }
 
 /** Only rows that are neither transferred nor locked can be imported. */
@@ -630,7 +640,7 @@ function rowHtml(it) {
     escapeHtml(it.key) +
     '">' +
     '<label class="check"' +
-    (locked ? ' title="' + escapeHtml(ts("history.lockedHint")) + '"' : "") +
+    (locked ? ' title="' + escapeHtml(lockedHint(it)) + '"' : "") +
     '><input type="checkbox" class="sel" ' +
     (it.selected ? "checked" : "") +
     (transferred || locked ? " disabled" : "") +

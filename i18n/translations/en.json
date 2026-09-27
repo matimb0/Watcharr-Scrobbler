@@ -220,6 +220,7 @@
     "noEpisodeReasonUnknown": "the episode is not part of the series data reported by the service",
     "episodeMissingHint": "The service reported no season/episode for this entry – enter them here to import the episode.",
     "lockedHint": "Blocked: assign season and episode first (see \"Change match\") – otherwise only the series would be added.",
+    "lockedHintNoMatch": "Blocked: no entry was found for this title – assign the match first (see \"Change match\").",
     "metadataMovie": "Movie",
     "metadataSeries": "Series",
     "metadataPerson": "Person",

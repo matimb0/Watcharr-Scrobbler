@@ -220,6 +220,7 @@
     "noEpisodeReasonUnknown": "die Folge ist nicht in den vom Dienst gemeldeten Seriendaten enthalten",
     "episodeMissingHint": "Der Dienst hat für diesen Eintrag keine Staffel/Folge gemeldet – hier eintragen, um die Folge zu importieren.",
     "lockedHint": "Gesperrt: erst Staffel und Folge zuordnen (über „Match ändern“) – sonst würde nur die Serie angelegt.",
+    "lockedHintNoMatch": "Gesperrt: für diesen Titel wurde kein Eintrag gefunden – erst die Zuordnung wählen (über „Match ändern“).",
     "metadataMovie": "Film",
     "metadataSeries": "Serie",
     "metadataPerson": "Person",
