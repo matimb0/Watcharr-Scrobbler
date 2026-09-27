@@ -66,6 +66,104 @@
   const FUZZY_MIN_SIMILARITY = 0.86;
   const FUZZY_MIN_MARGIN = 0.06;
 
+  // A token that carries no letters or digits at all ("&", "-", "•"). TMDB's
+  // search needs EVERY quoted token to appear in a title, so such a token (or a
+  // stray article) makes a search return nothing even when the very same title
+  // IS in TMDB's catalogue – see titleVariants.
+  const PUNCTUATION_TOKEN = /^[^\p{L}\p{N}]+$/u;
+
+  // Articles and conjunctions of the languages the extension speaks. Only used
+  // by titleVariants, i.e. as a LAST resort for a title whose exact wording TMDB
+  // cannot find.
+  const TITLE_STOP_WORDS = new Set([
+    "der",
+    "die",
+    "das",
+    "den",
+    "dem",
+    "des",
+    "ein",
+    "eine",
+    "einen",
+    "einem",
+    "einer",
+    "und",
+    "oder",
+    "the",
+    "a",
+    "an",
+    "of",
+    "and",
+    "or",
+    "to",
+    "in",
+    "on",
+    "at",
+    "le",
+    "la",
+    "les",
+    "un",
+    "une",
+    "et",
+    "du",
+    "el",
+    "los",
+    "las",
+    "una",
+    "y",
+    "o",
+    "del",
+    "il",
+    "lo",
+    "gli",
+    "uno",
+    "e",
+    "di",
+    "os",
+    "as",
+    "um",
+    "uma",
+    "do",
+    "da",
+    "ou",
+    "de",
+    "het",
+    "een",
+    "en",
+    "van",
+    "og",
+    "och",
+    "av",
+    "den",
+    "det",
+    "att",
+  ]);
+
+  /**
+   * Progressively reduced forms of a title, for a provider title whose exact
+   * wording TMDB's search cannot find.
+   *
+   * Returns the reduced forms, most conservative first (bare punctuation
+   * removed, then the stop words), without the input itself and without
+   * duplicates. Empty when there is nothing to reduce – then no extra request
+   * is made at all.
+   */
+  function titleVariants(title) {
+    const raw = String(title == null ? "" : title).trim();
+    if (!raw) return [];
+    const tokens = raw.split(/\s+/).filter(Boolean);
+    const out = [];
+    const add = (list) => {
+      const value = list.join(" ").trim();
+      if (!value || value === raw || out.indexOf(value) !== -1) return;
+      out.push(value);
+    };
+    const withoutPunctuation = tokens.filter((t) => !PUNCTUATION_TOKEN.test(t));
+    add(withoutPunctuation);
+    add(withoutPunctuation.filter((t) => !TITLE_STOP_WORDS.has(normTitle(t))));
+    return out;
+  }
+
   // Prefix of the keys an episode is additionally indexed under (see
   // episodeKeys). They never take part in the fuzzy comparison.
   const POSITION_PREFIX = "#pos:";
@@ -393,6 +491,8 @@
     normTitle,
     normName,
     nameSimilarity,
+    FUZZY_MIN_SIMILARITY,
+    titleVariants,
     positionKey,
     POSITION_PREFIX,
     episodeKeys,

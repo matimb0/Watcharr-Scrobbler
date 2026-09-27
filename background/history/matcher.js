@@ -14,6 +14,9 @@
     logErr,
     normTitle,
     normName,
+    nameSimilarity,
+    FUZZY_MIN_SIMILARITY,
+    titleVariants,
     episodeKeys,
     addEpisodeToIndex,
     lookupName,
@@ -58,7 +61,12 @@
    *  2. typed search without the filter (the service's year may be the
    *     episode's year or differ from TMDB's),
    *  3. "multi" search without the filter (the entry exists only under the
-   *     other medium type) – the last resort.
+   *     other medium type) – the last resort,
+   *  4. the REDUCED title forms as "multi" (see titleVariants): TMDB's search
+   *     only hits when every token of the query is part of the title, so a
+   *     service title carrying an extra "&"/article finds nothing otherwise.
+   *     Those hits are title-verified (`reduced: true` -> pickExactTitle).
+   *
    * Steps 2/3 also cover Watcharr versions that do not know typed searches or
    * filters yet: an unknown filter only stays in the query text and finds
    * nothing, and the next variant still runs.
@@ -74,6 +82,9 @@
     }
     queries.push({ query: name, type: typed });
     queries.push({ query: name, type: "multi" });
+    for (const reduced of titleVariants(name)) {
+      queries.push({ query: reduced, type: "multi", reduced: true });
+    }
     return queries;
   }
 
@@ -144,6 +155,48 @@
   }
 
   /**
+   * Title-verified pick for a REDUCED query (see titleVariants / buildQueries).
+   *
+   * A reduced query carries fewer words than the service reported, so its hit
+   * list is broader and `pickBest`'s "take the first candidate" fallback must
+   * NOT apply – it would silently match a different title. A hit is accepted
+   * only when the candidate's own name IS the service title; a mere spelling
+   * difference is accepted but flagged `ambiguous`, which makes the history page
+   * ask the user to check the match.
+   */
+  function pickExactTitle(results, title, isTv, year) {
+    const wantType = isTv ? "tmdb_tv" : "tmdb_movie";
+    let pool = results.filter((r) => r.type === wantType);
+    if (!pool.length) pool = results.slice();
+
+    const named = pool.filter((r) => nameSimilarity(r.name, title) >= 1);
+    if (named.length) {
+      // Same name: the year decides between same-titled media (remakes).
+      const wantYear = Number(year) || null;
+      if (wantYear) {
+        const exact = named.find((r) => resultYear(r) === wantYear);
+        if (exact) return exact;
+      }
+      return named[0];
+    }
+
+    let close = null;
+    let best = 0;
+    for (const r of pool) {
+      const score = nameSimilarity(r.name, title);
+      if (score > best) {
+        best = score;
+        close = r;
+      }
+    }
+    if (close && best >= FUZZY_MIN_SIMILARITY) {
+      close.ambiguous = true;
+      return close;
+    }
+    return null;
+  }
+
+  /**
    * Searches TMDB directly (see background/tmdb.js) and adds what TMDB cannot
    * know: whether a candidate is already on the user's Watcharr list, with which
    * status (that is what keeps the import from creating a duplicate and what
@@ -192,7 +245,7 @@
    */
   async function searchTmdb(title, year, isTv) {
     let failed = null;
-    for (const { query, type } of buildQueries(title, year, isTv)) {
+    for (const { query, type, reduced } of buildQueries(title, year, isTv)) {
       let results = [];
       try {
         results = await searchOnline(query, type);
@@ -209,7 +262,8 @@
         results.length,
         "results",
       );
-      const match = resultToMatch(pickBest(results, title, isTv, year));
+      const pick = reduced ? pickExactTitle : pickBest;
+      const match = resultToMatch(pick(results, title, isTv, year));
       if (match) {
         log("searchTmdb: matched TMDB", match.tmdbId, "via", query);
         return match;
@@ -952,6 +1006,7 @@
     resultYear,
     isOnList,
     pickBest,
+    pickExactTitle,
     pickByTmdbId,
     resultToMatch,
     searchOnline,
