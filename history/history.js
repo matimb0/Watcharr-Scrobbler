@@ -163,6 +163,7 @@ const els = {
   orderOldestBtn: $("#orderOldestBtn"),
   matchExactBtn: $("#matchExactBtn"),
   matchRoughBtn: $("#matchRoughBtn"),
+  hideRecordedBtn: $("#hideRecordedBtn"),
   dataBtn: $("#dataBtn"),
   dataMenu: $("#dataMenu"),
   fileBtn: $("#fileBtn"),
@@ -221,6 +222,10 @@ let oldestFirst = false;
 // "recorded" when the FINISHED activity matches date AND time), false =
 // rough (only checks whether the episode is already watched/finished).
 let exactMatch = true;
+// Session-only view filter: hides every row whose badge already says
+// "recorded" (nothing left to transfer), so only the open work stays visible.
+// Purely cosmetic – the rows keep their state and are just not rendered.
+let hideTransferred = false;
 // Import from a file: while set, the list is fed by the loaded export instead
 // of the open service tab (`loadedFile` keeps the file content so that
 // switching the order can re-send it to the background).
@@ -722,16 +727,32 @@ function matchesFilter(it) {
   return provider.includes(filter) || matched.includes(filter);
 }
 
+/** Does this row belong into the current view? The text filter and the
+ *  "hide already recorded" option only decide what is RENDERED – the row data
+ *  itself is never touched (a hidden row keeps its selection state). */
+function matchesView(it) {
+  if (hideTransferred && isTransferred(it)) return false;
+  return matchesFilter(it);
+}
+
 function render() {
-  items = allItems.filter(matchesFilter);
+  items = allItems.filter(matchesView);
   els.list.innerHTML = "";
   hintEl = null;
   if (!items.length) {
-    const emptyText = allItems.length
-      ? ts("history.emptyFilter", { filter })
-      : allLoaded
+    let emptyText;
+    if (allItems.length && filter) {
+      emptyText = ts("history.emptyFilter", { filter });
+    } else if (allItems.length) {
+      // Only reachable while "hide already recorded" is on: everything loaded
+      // so far is already in Watcharr. The auto-load (`maybeLoadMore`) keeps
+      // fetching until a row shows up or the history is complete.
+      emptyText = ts("history.emptyHidden");
+    } else {
+      emptyText = allLoaded
         ? ts("history.emptyHistory")
         : ts("history.reloadHint");
+    }
     replaceFromHtml(
       els.list,
       '<div class="list-hint">' + escapeHtml(emptyText) + "</div>",
@@ -749,7 +770,7 @@ function render() {
 
 /** Appends new items to end of list without re-rendering the whole list. */
 function appendItems(newItems) {
-  const filtered = newItems.filter(matchesFilter);
+  const filtered = newItems.filter(matchesView);
   items.push(...filtered);
   if (!filtered.length) {
     updateHint();
@@ -829,10 +850,17 @@ function updateViewMenu() {
   setMenuRadio(els.orderOldestBtn, oldestFirst);
   setMenuRadio(els.matchExactBtn, exactMatch);
   setMenuRadio(els.matchRoughBtn, !exactMatch);
+  setMenuRadio(els.hideRecordedBtn, hideTransferred);
 
   if (els.viewBtn) {
-    els.viewBtn.classList.toggle("active", oldestFirst || !exactMatch);
+    els.viewBtn.classList.toggle(
+      "active",
+      oldestFirst || !exactMatch || hideTransferred,
+    );
     els.viewBtn.title = ts("history.viewTitle");
+  }
+  if (els.hideRecordedBtn) {
+    els.hideRecordedBtn.title = ts("history.hideRecordedTitle");
   }
   if (els.orderOldestBtn) {
     // Switching to it loads the complete history once and asks beforehand.
@@ -863,11 +891,27 @@ function setExactMatch(on) {
   render();
 }
 
-// The view menu holds both radio groups (order and matching mode).
+/** Toggles "hide already recorded": every row whose badge already says
+ *  "recorded" disappears from the list. The menu stays open so the checkmark
+ *  (and the effect) can be seen right away. */
+function setHideTransferred(on) {
+  hideTransferred = !!on;
+  updateViewMenu();
+  render();
+  // Hiding can empty the list (everything loaded so far is recorded) – fill it
+  // up again right away instead of waiting for a scroll.
+  maybeLoadMore();
+}
+
+// The view menu holds both radio groups (order and matching mode) plus the
+// "hide already recorded" checkbox.
 els.viewBtn.addEventListener("click", () => toggleMenu("viewBtn"));
 els.dataBtn.addEventListener("click", () => toggleMenu("dataBtn"));
 els.matchExactBtn.addEventListener("click", () => setExactMatch(true));
 els.matchRoughBtn.addEventListener("click", () => setExactMatch(false));
+els.hideRecordedBtn.addEventListener("click", () =>
+  setHideTransferred(!hideTransferred),
+);
 
 // -- Source of the list: service history or an imported file -----------------
 // The page can either show the history crawled from the open service tab or an
