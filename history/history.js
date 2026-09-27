@@ -695,6 +695,14 @@ function ensureHint() {
 
 function updateHint() {
   const h = ensureHint();
+  // Empty list although rows are loaded: the REASON is the useful message
+  // (search without hits / everything already recorded), not the end-of-list
+  // hint. While more can still come in, the hint stays empty – otherwise it
+  // would silently switch to "scroll to load more" in front of an empty list.
+  if (!items.length && allItems.length) {
+    h.textContent = emptyListText();
+    return;
+  }
   if (loadingMore) {
     h.textContent = ts("history.loadingMore");
   } else if (allLoaded) {
@@ -735,28 +743,36 @@ function matchesView(it) {
   return matchesFilter(it);
 }
 
+/** Text for the list while the current view shows no row. Distinguishes the
+ *  reasons for an empty list, so the hint never blames the wrong one:
+ *  nothing loaded (yet), nothing matches the search text, or everything that
+ *  matches is already recorded in Watcharr ("hide already recorded"). In the
+ *  last case the list stays EMPTY as long as more rows can still arrive – a
+ *  text here would flash between every page load. */
+function emptyListText() {
+  if (!allItems.length) {
+    return allLoaded ? ts("history.emptyHistory") : ts("history.reloadHint");
+  }
+  if (filter && !allItems.some(matchesFilter)) {
+    return ts("history.emptyFilter", { filter });
+  }
+  // Rows are loaded, but every one of them is already recorded. The auto-load
+  // (`maybeLoadMore`) keeps fetching until a row shows up or the complete
+  // history is loaded – only the latter is worth telling the user about.
+  return allLoaded ? ts("history.emptyHidden") : "";
+}
+
 function render() {
   items = allItems.filter(matchesView);
   els.list.innerHTML = "";
   hintEl = null;
   if (!items.length) {
-    let emptyText;
-    if (allItems.length && filter) {
-      emptyText = ts("history.emptyFilter", { filter });
-    } else if (allItems.length) {
-      // Only reachable while "hide already recorded" is on: everything loaded
-      // so far is already in Watcharr. The auto-load (`maybeLoadMore`) keeps
-      // fetching until a row shows up or the history is complete.
-      emptyText = ts("history.emptyHidden");
-    } else {
-      emptyText = allLoaded
-        ? ts("history.emptyHistory")
-        : ts("history.reloadHint");
-    }
-    replaceFromHtml(
-      els.list,
-      '<div class="list-hint">' + escapeHtml(emptyText) + "</div>",
-    );
+    // The "nothing to show" text goes into the SAME hint element as the
+    // end-of-list hint (`ensureHint`), never into a second one: a later
+    // "load more" inserts the new rows directly before that element, and
+    // `updateHint` replaces the empty text with the loading/all-loaded text.
+    // An extra element here would stay on top of the freshly appended rows.
+    ensureHint().textContent = emptyListText();
     updateImportButton();
     return;
   }
