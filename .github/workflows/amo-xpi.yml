@@ -1,0 +1,70 @@
+# Attach the .xpi signed by Mozilla to an existing GitHub release.
+#
+# Why separate from the release workflow: AMO signs a *listed* version only on
+# approval (minutes to days). release.yml only submits, this one checks whether
+# the signature is available yet.
+#
+# Runs automatically every 2 hours and manually via
+# Actions -> "Signed XPI" -> Run workflow.
+#
+# For every public version the AMO API exposes the signed file as `file.url`
+# (GET /api/v5/addons/addon/<id>/versions/<version>/). While the version is
+# still in review it is not listed there (404) -> try again on the next run.
+# The XPI is renamed to the naming convention from tools/build.mjs.
+
+name: Signed XPI
+
+on:
+  schedule:
+    - cron: "17 */2 * * *"
+  workflow_dispatch:
+
+# contents: write – attach an asset to a release
+permissions:
+  contents: write
+
+env:
+  AMO_API: https://addons.mozilla.org/api/v5
+  # = browser_specific_settings.gecko.id from manifest.json
+  ADDON_ID: watcharr-scrobbler@mattw
+  # = gecko id without "@…" (this is how tools/build.mjs forms file names)
+  PKG_BASE: watcharr-scrobbler
+
+jobs:
+  attach:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Attach signed XPI to releases without one
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          gh api "repos/$GITHUB_REPOSITORY/releases?per_page=30" \
+            --jq '.[] | select(.draft | not) | [.tag_name, ([.assets[].name] | join(","))] | @tsv' |
+          while IFS=$'\t' read -r tag assets; do
+            version="${tag#v}"
+            xpi="${PKG_BASE}-firefox-${version}.xpi"
+
+            case ",$assets," in
+              *",$xpi,"*)
+                echo "$tag: $xpi is already attached - skipped."
+                continue
+                ;;
+            esac
+
+            url=""
+            if body="$(curl -fsS "${AMO_API}/addons/addon/${ADDON_ID}/versions/${version}/" 2>/dev/null)"; then
+              url="$(printf '%s' "$body" | jq -r '.file.url // empty')"
+            fi
+
+            if [ -z "$url" ]; then
+              echo "$tag: version $version is not approved on AMO yet - retry later."
+              continue
+            fi
+
+            echo "$tag: signed file found, downloading $xpi."
+            curl -fsSL "$url" -o "$xpi"
+            gh release upload "$tag" "$xpi" --clobber
+            echo "$tag: $xpi attached."
+          done

@@ -1,0 +1,136 @@
+# Tag -> build -> submit to addons.mozilla.org (AMO)
+#
+# Triggered by
+#   git tag v1.5 && git push origin v1.5
+#
+#   1. the tag must match the manifest.json version (otherwise the run fails)
+#   2. npm ci && npm run build  -> dist/firefox, dist/chrome and
+#      watcharr-scrobbler-firefox-1.5.xpi in the project root
+#   3. web-ext lint on dist/firefox (the same validation AMO runs on upload,
+#      so problems surface here instead of in the review)
+#   4. web-ext sign --channel listed  -> uploads the version to AMO and
+#      submits it for review
+#   5. create the GitHub release for the tag (notes generated from commits)
+#
+# IMPORTANT - the signed .xpi:
+# AMO signs a *listed* version only once it has been approved (minutes to days).
+# Hence `--approval-timeout 0` (= do not wait for approval) and the release has
+# no asset at first. `.github/workflows/amo-xpi.yml` fetches the signed .xpi as
+# soon as AMO publishes it and attaches it to the release. To wait here instead,
+# drop `--approval-timeout 0` (default 15 min, a useful maximum is ~60 min
+# because of the 6 h job limit) - the signed XPI then lands in
+# web-ext-artifacts/ and the last step attaches it right away.
+#
+# Required repository secrets (Settings -> Secrets and variables -> Actions):
+#   AMO_JWT_ISSUER  - "JWT issuer" of the AMO API credentials
+#   AMO_JWT_SECRET  - "JWT secret" of the AMO API credentials
+# (https://addons.mozilla.org/developers/addon/api/key/ - generating a new key
+#  pair invalidates the old one, so use one pair for every environment.)
+
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+# contents: write – create the GitHub release and attach assets
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Check tag against manifest.json
+        id: version
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME#v}"
+          manifest="$(node -p "require('./manifest.json').version")"
+          if [ "$tag" != "$manifest" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match manifest.json (version $manifest). Bump the version in manifest.json first, then tag."
+            exit 1
+          fi
+          echo "version=$tag" >> "$GITHUB_OUTPUT"
+          echo "xpi=watcharr-scrobbler-firefox-${tag}.xpi" >> "$GITHUB_OUTPUT"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Lint (Firefox bundle)
+        run: npx --no-install web-ext lint --source-dir dist/firefox
+
+      # AMO rejects a version that already exists - fail with a clear message
+      # instead of a cryptic upload error.
+      - name: Check whether the version already exists on AMO
+        env:
+          AMO_VERSION_API: https://addons.mozilla.org/api/v5/addons/addon/watcharr-scrobbler@mattw/versions
+        run: |
+          set -euo pipefail
+          code="$(curl -s -o /dev/null -w '%{http_code}' \
+            "${AMO_VERSION_API}/${{ steps.version.outputs.version }}/")"
+          if [ "$code" = "200" ]; then
+            echo "::error::Version ${{ steps.version.outputs.version }} is already published on AMO - bump the version in manifest.json and tag again."
+            exit 1
+          fi
+          echo "Version is not published on AMO yet (HTTP $code) - continuing."
+
+      - name: Submit to AMO (listed)
+        env:
+          AMO_JWT_ISSUER: ${{ secrets.AMO_JWT_ISSUER }}
+          AMO_JWT_SECRET: ${{ secrets.AMO_JWT_SECRET }}
+        run: |
+          set -euo pipefail
+          npx --no-install web-ext sign \
+            --source-dir dist/firefox \
+            --channel listed \
+            --artifacts-dir web-ext-artifacts \
+            --api-key "$AMO_JWT_ISSUER" \
+            --api-secret "$AMO_JWT_SECRET" \
+            --approval-timeout 0
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "Release $GITHUB_REF_NAME already exists - skipped."
+          else
+            gh release create "$GITHUB_REF_NAME" \
+              --title "$GITHUB_REF_NAME" \
+              --generate-notes
+          fi
+
+      # Only runs when web-ext downloaded a signed file (which happens only
+      # without `--approval-timeout 0` or on immediate approval).
+      - name: Attach signed XPI (if present)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          files=(web-ext-artifacts/*.xpi)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "No signed file yet - AMO signs on approval."
+            echo "amo-xpi.yml attaches it to the release later."
+            exit 0
+          fi
+          # AMO renames the signed file (…-an+fx.xpi) - releases follow the
+          # naming convention from tools/build.mjs.
+          cp "${files[0]}" "${{ steps.version.outputs.xpi }}"
+          gh release upload "$GITHUB_REF_NAME" "${{ steps.version.outputs.xpi }}" --clobber
+          echo "Attached: ${{ steps.version.outputs.xpi }}"
