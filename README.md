@@ -54,13 +54,14 @@ integrated as services.
 
 **Chrome**
 
-- The add-on is **not yet available** in the Chrome Web Store. If there is
-  interest, it will also be uploaded to the Chrome Web Store.
-- **In the meantime:** You can build a current, ready-to-use version yourself.
-  Run `npm run build` – this creates the unpacked extension in `dist/chrome/`
-  (to build only Chrome, use `npm run build:chrome`). Then open
-  `chrome://extensions`, enable **Developer mode** and click
-  **“Load unpacked”**, selecting the `dist/chrome` folder.
+- **Chrome Web Store:** The add-on is available in the
+  [Chrome Web Store](https://chromewebstore.google.com/detail/gfnkkhfengdpgmnekojlahmfpkkifngd) – this is the
+  recommended way to install it.
+- **Manual (`.zip`):** Alternatively, download the `.zip`
+  (`watcharr-scrobbler-chrome-….zip`) attached to the respective
+  [GitHub Release](https://github.com/matimb0/Watcharr-Scrobbler/releases) and
+  unzip it. Then open `chrome://extensions`, enable **Developer mode** and click
+  **“Load unpacked”**, selecting the unzipped folder.
 
 <br>
 
