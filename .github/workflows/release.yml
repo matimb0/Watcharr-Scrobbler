@@ -1,31 +1,24 @@
-# Tag -> build -> submit to addons.mozilla.org (AMO)
+# Tag -> build -> submit to AMO + Chrome Web Store -> GitHub release.
 #
-# Triggered by
 #   git tag v1.5 && git push origin v1.5
 #
-#   1. the tag must match the manifest.json version (otherwise the run fails)
-#   2. npm ci && npm run build  -> dist/firefox, dist/chrome and
-#      watcharr-scrobbler-firefox-1.5.xpi in the project root
-#   3. web-ext lint on dist/firefox (the same validation AMO runs on upload,
-#      so problems surface here instead of in the review)
-#   4. web-ext sign --channel listed  -> uploads the version to AMO and
-#      submits it for review
-#   5. create the GitHub release for the tag (notes generated from commits)
+# One job for both stores because `npm run build` produces the .xpi and the .zip
+# anyway. The tag must equal the manifest.json version. A re-run of the same tag
+# is safe: AMO is skipped once the version exists there, so a Chrome retry does
+# not submit to AMO twice. AMO signs a *listed* version only on approval
+# (`--approval-timeout 0`), so amo-xpi.yml attaches the signed .xpi later.
 #
-# IMPORTANT - the signed .xpi:
-# AMO signs a *listed* version only once it has been approved (minutes to days).
-# Hence `--approval-timeout 0` (= do not wait for approval) and the release has
-# no asset at first. `.github/workflows/amo-xpi.yml` fetches the signed .xpi as
-# soon as AMO publishes it and attaches it to the release. To wait here instead,
-# drop `--approval-timeout 0` (default 15 min, a useful maximum is ~60 min
-# because of the 6 h job limit) - the signed XPI then lands in
-# web-ext-artifacts/ and the last step attaches it right away.
-#
-# Required repository secrets (Settings -> Secrets and variables -> Actions):
-#   AMO_JWT_ISSUER  - "JWT issuer" of the AMO API credentials
-#   AMO_JWT_SECRET  - "JWT secret" of the AMO API credentials
-# (https://addons.mozilla.org/developers/addon/api/key/ - generating a new key
-#  pair invalidates the old one, so use one pair for every environment.)
+# Secrets (Settings -> Secrets and variables -> Actions):
+#   AMO_JWT_ISSUER / AMO_JWT_SECRET
+#     https://addons.mozilla.org/developers/addon/api/key/
+#   CHROME_EXTENSION_ID     item id from the store dashboard URL
+#   CHROME_CLIENT_ID/-SECRET  OAuth client "Desktop app" in a project with the
+#                           Chrome Web Store API enabled
+#   CHROME_REFRESH_TOKEN    scope .../auth/chromewebstore, get it once with
+#                           `npx chrome-webstore-upload-keys`. Keep the OAuth
+#                           consent screen "In production", otherwise the token
+#                           expires after 7 days ("Testing" mode).
+# A missing Chrome secret only skips the upload (warning), the release still runs.
 
 name: Release
 
@@ -63,6 +56,8 @@ jobs:
           fi
           echo "version=$tag" >> "$GITHUB_OUTPUT"
           echo "xpi=watcharr-scrobbler-firefox-${tag}.xpi" >> "$GITHUB_OUTPUT"
+          # same name tools/build.mjs writes
+          echo "zip=watcharr-scrobbler-chrome-${tag}.zip" >> "$GITHUB_OUTPUT"
 
       - name: Install dependencies
         run: npm ci
@@ -73,9 +68,10 @@ jobs:
       - name: Lint (Firefox bundle)
         run: npx --no-install web-ext lint --source-dir dist/firefox
 
-      # AMO rejects a version that already exists - fail with a clear message
-      # instead of a cryptic upload error.
+      # A version that already exists is expected on a re-run -> skip instead of
+      # failing. A forgotten version bump is caught by the tag check above.
       - name: Check whether the version already exists on AMO
+        id: amo
         env:
           AMO_VERSION_API: https://addons.mozilla.org/api/v5/addons/addon/watcharr-scrobbler@mattw/versions
         run: |
@@ -83,12 +79,15 @@ jobs:
           code="$(curl -s -o /dev/null -w '%{http_code}' \
             "${AMO_VERSION_API}/${{ steps.version.outputs.version }}/")"
           if [ "$code" = "200" ]; then
-            echo "::error::Version ${{ steps.version.outputs.version }} is already published on AMO - bump the version in manifest.json and tag again."
-            exit 1
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::Version ${{ steps.version.outputs.version }} is already published on AMO - the submit step is skipped (re-run)."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "Version is not published on AMO yet (HTTP $code) - continuing."
           fi
-          echo "Version is not published on AMO yet (HTTP $code) - continuing."
 
       - name: Submit to AMO (listed)
+        if: steps.amo.outputs.exists != 'true'
         env:
           AMO_JWT_ISSUER: ${{ secrets.AMO_JWT_ISSUER }}
           AMO_JWT_SECRET: ${{ secrets.AMO_JWT_SECRET }}
@@ -115,8 +114,7 @@ jobs:
               --generate-notes
           fi
 
-      # Only runs when web-ext downloaded a signed file (which happens only
-      # without `--approval-timeout 0` or on immediate approval).
+      # Only present if AMO approved immediately.
       - name: Attach signed XPI (if present)
         env:
           GH_TOKEN: ${{ github.token }}
@@ -129,8 +127,94 @@ jobs:
             echo "amo-xpi.yml attaches it to the release later."
             exit 0
           fi
-          # AMO renames the signed file (…-an+fx.xpi) - releases follow the
-          # naming convention from tools/build.mjs.
+          # AMO renames the file - releases use the tools/build.mjs convention.
           cp "${files[0]}" "${{ steps.version.outputs.xpi }}"
           gh release upload "$GITHUB_REF_NAME" "${{ steps.version.outputs.xpi }}" --clobber
           echo "Attached: ${{ steps.version.outputs.xpi }}"
+
+      - name: Attach Chrome ZIP to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release upload "$GITHUB_REF_NAME" "${{ steps.version.outputs.zip }}" --clobber
+          echo "Attached: ${{ steps.version.outputs.zip }}"
+
+      # Secrets cannot be read in an `if:`, so check them here and skip the
+      # upload when one is missing.
+      - name: Check Chrome Web Store credentials
+        id: creds
+        env:
+          EXTENSION_ID: ${{ secrets.CHROME_EXTENSION_ID }}
+          CLIENT_ID: ${{ secrets.CHROME_CLIENT_ID }}
+          CLIENT_SECRET: ${{ secrets.CHROME_CLIENT_SECRET }}
+          REFRESH_TOKEN: ${{ secrets.CHROME_REFRESH_TOKEN }}
+        run: |
+          set -euo pipefail
+          missing=""
+          [ -n "$EXTENSION_ID" ] || missing="CHROME_EXTENSION_ID"
+          [ -n "$CLIENT_ID" ] || missing="${missing:+$missing }CHROME_CLIENT_ID"
+          [ -n "$CLIENT_SECRET" ] || missing="${missing:+$missing }CHROME_CLIENT_SECRET"
+          [ -n "$REFRESH_TOKEN" ] || missing="${missing:+$missing }CHROME_REFRESH_TOKEN"
+          if [ -n "$missing" ]; then
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Missing secret(s): $missing - the Chrome upload is skipped (see the header of this workflow)."
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload and publish (Chrome Web Store)
+        if: steps.creds.outputs.ready == 'true'
+        env:
+          EXTENSION_ID: ${{ secrets.CHROME_EXTENSION_ID }}
+          CLIENT_ID: ${{ secrets.CHROME_CLIENT_ID }}
+          CLIENT_SECRET: ${{ secrets.CHROME_CLIENT_SECRET }}
+          REFRESH_TOKEN: ${{ secrets.CHROME_REFRESH_TOKEN }}
+          ZIP: ${{ steps.version.outputs.zip }}
+        run: |
+          set -euo pipefail
+
+          # 1) refresh token -> access token
+          token="$(curl -fsS -X POST https://oauth2.googleapis.com/token \
+            -d "client_id=${CLIENT_ID}" \
+            -d "client_secret=${CLIENT_SECRET}" \
+            -d "refresh_token=${REFRESH_TOKEN}" \
+            -d "grant_type=refresh_token" | jq -r '.access_token // empty')"
+          if [ -z "$token" ]; then
+            echo "::error::No access token - the client id, secret or refresh token is invalid/expired."
+            exit 1
+          fi
+
+          # 2) upload (replaces the current draft)
+          upload="$(curl -sS -X PUT \
+            "https://www.googleapis.com/upload/chromewebstore/v1.1/items/${EXTENSION_ID}?uploadType=media" \
+            -H "Authorization: Bearer ${token}" \
+            -H "x-goog-api-version: 2" \
+            -H "Content-Type: application/zip" \
+            --data-binary "@${ZIP}")"
+          echo "$upload"
+
+          # The API answers 200 even on failure, so check uploadState (SUCCESS).
+          state="$(printf '%s' "$upload" | jq -r '.uploadState // empty' 2>/dev/null || true)"
+          if [ "$state" != "SUCCESS" ]; then
+            echo "::error::Chrome Web Store upload failed (uploadState=${state:-missing})."
+            printf '%s' "$upload" | jq -r 'if .error then (.error.message // (.error|tostring)) else . end' >&2 || true
+            exit 1
+          fi
+          echo "Upload OK (uploadState=${state})."
+
+          # 3) submit for review (publishTarget default = public store)
+          publish="$(curl -sS -X POST \
+            "https://www.googleapis.com/chromewebstore/v1.1/items/${EXTENSION_ID}/publish?publishTarget=default" \
+            -H "Authorization: Bearer ${token}" \
+            -H "x-goog-api-version: 2" \
+            -H "Content-Length: 0")"
+          echo "$publish"
+
+          status="$(printf '%s' "$publish" | jq -r '.status // [] | join(",")' 2>/dev/null || true)"
+          if [ "$status" != "OK" ]; then
+            echo "::error::Chrome Web Store publish failed (status=${status:-missing})."
+            printf '%s' "$publish" | jq -r '.statusDetail // .error // [] | if type == "array" then join("; ") else tostring end' >&2 || true
+            exit 1
+          fi
+          echo "Submitted for review (status=${status})."
