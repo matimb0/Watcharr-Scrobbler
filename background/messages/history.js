@@ -81,6 +81,22 @@
         }),
       })),
 
+    // Drops the user's manual decision for one row and resolves it again, so
+    // the automatic assignment is shown once more.
+    "watcharr:history:resetMatch": (msg) =>
+      guarded(async () => ({
+        ok: true,
+        item: await WatcharrHistory.resetMatch(msg.key),
+      })),
+
+    // Marks one row as deliberately unmatched – the counterpart to picking a
+    // match: the automatic assignment is dropped and remembered.
+    "watcharr:history:unmatch": (msg) =>
+      guarded(async () => ({
+        ok: true,
+        item: await WatcharrHistory.setUnmatched(msg.key),
+      })),
+
     "watcharr:history:import": (msg) =>
       guarded(async () => ({
         ok: true,

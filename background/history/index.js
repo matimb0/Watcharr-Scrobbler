@@ -494,6 +494,73 @@ const WatcharrHistory = (() => {
     return serializeItem(item);
   }
 
+  /**
+   * Drops the user's manual decision for one row ("Change match" -> reset): the
+   * cached match – and the season/episode the user corrected – is forgotten and
+   * the row is resolved from scratch, so the AUTOMATIC assignment is shown
+   * again (see matcher.matchTitle / deriveEpisode).
+   */
+  async function resetMatch(key) {
+    const item = itemMap.get(key) || items.find((x) => x.key === key);
+    if (!item) return null;
+    if (!itemMap.has(item.key)) itemMap.set(item.key, item);
+
+    await matcher.forgetDecision(item);
+
+    // Back to what the service reported: the effective season/episode may be
+    // derived values, the provider's own numbers are never touched.
+    item.match = null;
+    item.matchError = null;
+    item.matchErrorCode = null;
+    item.matchEpisodeName = null;
+    item.season = item.providerSeason;
+    item.episode = item.providerEpisode;
+    item.episodeDerived = false;
+    item.episodeSource = null;
+    item.resolved = false;
+
+    // Resolve exactly like a fresh load would – nothing is pre-selected.
+    await resolveItem(item);
+    item.status = "pending";
+    item.error = null;
+    item.errorCode = null;
+    return serializeItem(item);
+  }
+
+  /**
+   * Marks one row as DELIBERATELY unmatched ("Change match" -> no match): the
+   * automatic assignment is dropped and the decision is remembered
+   * (matcher.rememberUnmatched), so the row stays unmatched on the next load
+   * and no further TMDB search guesses a match. The row is locked for the
+   * import in this state (see history/history.js -> isLocked).
+   */
+  async function setUnmatched(key) {
+    const item = itemMap.get(key) || items.find((x) => x.key === key);
+    if (!item) return null;
+    if (!itemMap.has(item.key)) itemMap.set(item.key, item);
+
+    await matcher.rememberUnmatched(item);
+
+    item.match = null;
+    item.matchError = "the match was removed by the user";
+    item.matchErrorCode = "unmatched";
+    item.matchEpisodeName = null;
+    // Back to what the service reported (see resetMatch).
+    item.season = item.providerSeason;
+    item.episode = item.providerEpisode;
+    item.episodeDerived = false;
+    item.episodeSource = null;
+    // The user decided – nothing is resolved automatically for this row.
+    item.resolved = true;
+    item.selected = false;
+    item.status = "pending";
+    item.error = null;
+    item.errorCode = null;
+    // Clears the Watcharr-side episode state (no match -> nothing to look up).
+    await matcher.resolveItemEpisodeStatus(item);
+    return serializeItem(item);
+  }
+
   /** Imports the selected entries (keys from the history page). */
   async function importItems(keys) {
     const entries = [];
@@ -672,6 +739,8 @@ const WatcharrHistory = (() => {
     load,
     more,
     rematch,
+    resetMatch,
+    setUnmatched,
     importItems,
     setOldestFirst,
     setService,

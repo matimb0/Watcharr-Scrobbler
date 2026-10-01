@@ -35,6 +35,13 @@
   const STORAGE_KEY = "matchCache";
   // Bumping this drops an incompatible stored blob instead of misreading it.
   const VERSION = 1;
+
+  /**
+   * Answer of `lookupMatch` for a title the user DELIBERATELY left unmatched
+   * ("Change match" -> no match): a stored decision, not a cache miss – the
+   * caller must not search TMDB again.
+   */
+  const UNMATCHED = { unmatched: true };
   // One budget for the whole cache – a stored TITLE and a stored EPISODE cost
   // the same to keep (a few dozen bytes) and save the same (one TMDB request),
   // so there is no reason to reserve room for one kind at the expense of the
@@ -157,7 +164,8 @@
    * ------------------------------------------------------------------ */
 
   /**
-   * Cached TMDB match of a provider title, or null.
+   * Cached TMDB match of a provider title, `UNMATCHED` when the user decided
+   * that this title has no match at all, or null when nothing is stored.
    *
    * The stored year guards against same-titled remakes ("Road House" 1989 vs
    * 2024): when the provider reports a year and the cached match is from a
@@ -173,7 +181,10 @@
     await load();
     const key = matchKey(title, isTv);
     const entry = key && state.matches[key];
-    if (!entry || !entry.m || !entry.m.tmdbId) return null;
+    if (!entry) return null;
+    // A stored "no match" decision (see storeUnmatched) – not a miss.
+    if (!entry.m) return UNMATCHED;
+    if (!entry.m.tmdbId) return null;
 
     const wantYear = Number(year) || null;
     const haveYear = Number(entry.m.year) || null;
@@ -232,6 +243,37 @@
     log("matchCache: stored", JSON.stringify(title), "->", tmdbId);
   }
 
+  /**
+   * Stores the decision "this title is deliberately NOT matched" – the user's
+   * counterpart to a picked match. `lookupMatch` answers it with `UNMATCHED`
+   * instead of null, so the title is not searched and not auto-guessed again on
+   * the next load (see matcher.matchTitle).
+   */
+  async function storeUnmatched(title, isTv) {
+    await load();
+    const key = matchKey(title, isTv);
+    if (!key) return;
+    state.matches[key] = { at: Date.now(), m: null };
+    evict();
+    schedule();
+    log("matchCache: stored 'no match' for", JSON.stringify(title));
+  }
+
+  /**
+   * Drops the stored match of one provider title – used by "reset to
+   * automatic", which wants the next resolution to search TMDB again instead
+   * of answering with the (possibly user-picked) cached entry. Removing the
+   * entry also undoes a stored "no match" decision (see storeUnmatched).
+   */
+  async function forgetMatch(title, isTv) {
+    await load();
+    const key = matchKey(title, isTv);
+    if (!key || !state.matches[key]) return;
+    delete state.matches[key];
+    schedule();
+    log("matchCache: forgot match", JSON.stringify(title));
+  }
+
   /* ------------------------------------------------------------------ *
    * Episodes
    * ------------------------------------------------------------------ */
@@ -279,6 +321,20 @@
     );
   }
 
+  /**
+   * Drops the stored season/episode of one episode name of one series – used
+   * by "reset to automatic" so a corrected number does not come back out of
+   * the cache (see deriveEpisode).
+   */
+  async function forgetEpisode(tmdbId, episodeTitle) {
+    await load();
+    const key = episodeKey(tmdbId, episodeTitle);
+    if (!key || !state.episodes[key]) return;
+    delete state.episodes[key];
+    schedule();
+    log("matchCache: forgot episode", JSON.stringify(episodeTitle));
+  }
+
   /* ------------------------------------------------------------------ *
    * Maintenance
    * ------------------------------------------------------------------ */
@@ -310,10 +366,14 @@
   }
 
   globalThis.WatcharrMatchCache = {
+    UNMATCHED,
     lookupMatch,
     storeMatch,
+    storeUnmatched,
+    forgetMatch,
     lookupEpisode,
     storeEpisode,
+    forgetEpisode,
     flush,
     clear,
     size,

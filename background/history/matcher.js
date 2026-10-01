@@ -317,6 +317,16 @@
   async function matchTitle(title, year, isTv, options) {
     const fillWatched = !options || options.fillWatched !== false;
     const cached = await WatcharrMatchCache.lookupMatch(title, year, isTv);
+    // The user marked this title as "no match" ("Change match"): that decision
+    // counts, so no TMDB search may guess a match again.
+    if (cached === WatcharrMatchCache.UNMATCHED) {
+      log(
+        "matchTitle:",
+        JSON.stringify(title),
+        "-> deliberately left unmatched",
+      );
+      return null;
+    }
     if (cached) {
       log(
         "matchTitle:",
@@ -376,6 +386,25 @@
   async function resolveMatchByTmdbId(item) {
     const hint = item.tmdbHint;
     if (!hint || hint.tmdbId == null) return null;
+
+    // The user's "no match" decision also beats the file's TMDB id: it is an
+    // explicit instruction, and the button promises the entry stays unmatched
+    // (see rememberUnmatched). "Reset" removes the entry and the id applies
+    // again.
+    const prior = await WatcharrMatchCache.lookupMatch(
+      item.title,
+      item.year,
+      item.isTv,
+    );
+    if (prior === WatcharrMatchCache.UNMATCHED) {
+      log(
+        "resolveMatchByTmdbId:",
+        JSON.stringify(item.title),
+        "-> deliberately left unmatched",
+      );
+      return null;
+    }
+
 
     // Try the file's TMDB title first, then the service's title.
     const names = [];
@@ -824,6 +853,44 @@
   }
 
   /**
+   * Forgets the user's decision for this row ("reset" in "Change match"): the
+   * stored match of the title and the stored season/episode of its episode
+   * NAME are dropped, so the next resolution searches TMDB and derives the
+   * numbers again instead of answering from the cache
+   * (see background/match-cache.js).
+   *
+   * The episode is keyed by the TMDB id of the match that is being forgotten,
+   * so the id is read BEFORE the match is dropped.
+   */
+  async function forgetDecision(item) {
+    if (!item) return;
+    const tmdbId = item.match && item.match.tmdbId;
+    await WatcharrMatchCache.forgetMatch(item.title, item.isTv);
+    if (item.isTv && tmdbId) {
+      await WatcharrMatchCache.forgetEpisode(
+        tmdbId,
+        episodeProbeName(item),
+      );
+    }
+  }
+
+  /**
+   * Keeps the user's "no match" decision ("Change match" -> no match) in the
+   * persistent cache: the title is stored as DELIBERATELY unmatched, so the
+   * next load neither searches TMDB again nor shows a guessed match
+   * (see background/match-cache.js). An explicit "no match" supersedes the
+   * previous decision for this title, so that entry is dropped first.
+   *
+   * The episode cache is left alone: it is keyed by TMDB id + episode NAME and
+   * stays valid for the series, independent of whether this row is matched.
+   */
+  async function rememberUnmatched(item) {
+    if (!item) return;
+    await WatcharrMatchCache.forgetMatch(item.title, item.isTv);
+    await WatcharrMatchCache.storeUnmatched(item.title, item.isTv);
+  }
+
+  /**
    * Watch dates of one Watcharr entry (one request per entry). They come from
    * the entry's watch events (`GET /api/activity/:watchedId`, each event may
    * carry a `customDate`). Returns them as ISO strings, newest first – used for
@@ -1015,6 +1082,8 @@
     resolveEpisodeFromDate,
     deriveEpisode,
     rememberDecision,
+    forgetDecision,
+    rememberUnmatched,
     getEpisodeName,
     getWatchDates,
     clearCache,

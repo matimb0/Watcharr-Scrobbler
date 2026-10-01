@@ -786,6 +786,22 @@ button:disabled {
   margin: 6px 0;
 }
 
+/* "Reset manual match" / "No match" at the foot of the popover: both drop a
+   decision – reset shows the automatic assignment again, "no match" declares
+   the row deliberately unmatched. */
+.rematch-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.rematch-actions button {
+  font-size: 12px;
+  padding: 6px 12px;
+}
+
 .rematch-results {
   max-height: 220px;
   overflow: auto;

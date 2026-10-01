@@ -65,6 +65,7 @@ const ERROR_KEYS = {
   no_service_response: "history.error.noResponse",
   auth_failed: "history.error.authFailed",
   no_match: "history.error.noMatch",
+  unmatched: "history.error.unmatched",
   episode_missing: "history.error.episodeMissing",
   create_failed: "history.error.createFailed",
   export_running: "history.error.exportRunning",
@@ -1417,7 +1418,19 @@ els.list.addEventListener("click", async (e) => {
       '<div class="hint">' +
       escapeHtml(ts("history.searchHint")) +
       "</div>" +
-      '<div class="rematch-results"></div>',
+      '<div class="rematch-results"></div>' +
+      // Both buttons only DROP a decision: "reset" goes back to the automatic
+      // assignment, "no match" declares the row deliberately unmatched.
+      '<div class="rematch-actions">' +
+      '<button type="button" class="ghost reset-match">' +
+      escapeHtml(ts("history.resetMatch")) +
+      '</button>' +
+      '<button type="button" class="ghost unmatched-btn" title="' +
+      escapeHtml(ts("history.unmatchTitle")) +
+      '">' +
+      escapeHtml(ts("history.unmatch")) +
+      "</button>" +
+      "</div>",
   );
   row.after(panel);
 
@@ -1439,6 +1452,22 @@ els.list.addEventListener("click", async (e) => {
     // "Apply" corrects season/episode without touching the series match.
     applyEpisodeBtn.addEventListener("click", () => {
       rematch(key, null, readEpisode());
+    });
+  }
+
+  const resetBtn = panel.querySelector(".reset-match");
+  if (resetBtn) {
+    resetBtn.addEventListener("click", () => {
+      panel.remove();
+      resetMatch(key);
+    });
+  }
+
+  const unmatchedBtn = panel.querySelector(".unmatched-btn");
+  if (unmatchedBtn) {
+    unmatchedBtn.addEventListener("click", () => {
+      panel.remove();
+      setUnmatched(key);
     });
   }
 
@@ -1568,6 +1597,52 @@ async function rematch(key, result, episode) {
     const msg = resp
       ? await describeError(resp, "history.matchCouldNotBeUpdated")
       : ts("history.matchCouldNotBeUpdated");
+    setStatus("error", msg);
+  }
+}
+
+/** Drops a manual decision (picked match and/or corrected season/episode) for
+ *  one row and shows the automatic assignment again. */
+async function resetMatch(key) {
+  const resp = await browser.runtime.sendMessage({
+    type: "watcharr:history:resetMatch",
+    key,
+  });
+  if (resp && resp.ok && resp.item) {
+    const it = allItems.find((x) => x.key === key);
+    if (it) Object.assign(it, resp.item);
+    render();
+    setStatus(
+      "success",
+      ts("history.matchReset", { title: resp.item.title || key }),
+    );
+  } else {
+    const msg = resp
+      ? await describeError(resp, "history.matchCouldNotBeReset")
+      : ts("history.matchCouldNotBeReset");
+    setStatus("error", msg);
+  }
+}
+
+/** Marks one row as deliberately unmatched: the automatic assignment is dropped
+ *  and the row stays unmatched on the next load. */
+async function setUnmatched(key) {
+  const resp = await browser.runtime.sendMessage({
+    type: "watcharr:history:unmatch",
+    key,
+  });
+  if (resp && resp.ok && resp.item) {
+    const it = allItems.find((x) => x.key === key);
+    if (it) Object.assign(it, resp.item);
+    render();
+    setStatus(
+      "success",
+      ts("history.unmatchedSet", { title: resp.item.title || key }),
+    );
+  } else {
+    const msg = resp
+      ? await describeError(resp, "history.matchCouldNotBeUnmatched")
+      : ts("history.matchCouldNotBeUnmatched");
     setStatus("error", msg);
   }
 }
