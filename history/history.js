@@ -250,6 +250,37 @@ function replaceFromHtml(element, html) {
   for (const node of Array.from(parsed.body.childNodes)) {
     element.appendChild(node);
   }
+  scheduleTruncationTitles();
+}
+
+// Exactly the elements the CSS cuts off with an ellipsis (see history.css:
+// the matched title on the Watcharr side and the header title/subtitle). The
+// full text is exposed as a hover tooltip WHILE the text is truncated; a text
+// that fits fully keeps none, so the tooltip never just repeats what is
+// already visible.
+const TRUNCATED_SELECTOR = ".watcharr .info .name, .brand h1, .brand .sub";
+
+function applyTruncationTitles() {
+  for (const el of document.querySelectorAll(TRUNCATED_SELECTOR)) {
+    const text = el.textContent.trim();
+    if (el.scrollWidth > el.clientWidth + 1) {
+      if (el.title !== text) el.title = text;
+    } else if (el.hasAttribute("title")) {
+      el.removeAttribute("title");
+    }
+  }
+}
+
+// Truncation depends on the layout, so this runs after paint and many calls
+// (one per re-rendered row) are coalesced into a single pass.
+let truncationScheduled = false;
+function scheduleTruncationTitles() {
+  if (truncationScheduled) return;
+  truncationScheduled = true;
+  requestAnimationFrame(() => {
+    truncationScheduled = false;
+    applyTruncationTitles();
+  });
 }
 
 let statusTimer = null; // Auto-hide timer for success popup
@@ -1424,7 +1455,7 @@ els.list.addEventListener("click", async (e) => {
       '<div class="rematch-actions">' +
       '<button type="button" class="ghost reset-match">' +
       escapeHtml(ts("history.resetMatch")) +
-      '</button>' +
+      "</button>" +
       '<button type="button" class="ghost unmatched-btn" title="' +
       escapeHtml(ts("history.unmatchTitle")) +
       '">' +
@@ -1969,6 +2000,7 @@ async function applyServiceHeader() {
     els.pageSubtitle.textContent = await t("history.pageSubtitle", {
       service: name,
     });
+  scheduleTruncationTitles();
 }
 
 /**
@@ -2621,6 +2653,18 @@ async function initHistory() {
   // race where that first reconciliation could not start a load.
   const loadStarted = await refreshProviders(undefined, "init");
   await applyServiceHeader();
+
+  // Truncated texts (ellipsis) reveal their full content on hover. Rows are
+  // re-rendered/appended often (import, infinite scroll) and a resize moves
+  // the cut-off point, so watch the list and the window instead of hooking
+  // every single render site.
+  new MutationObserver(scheduleTruncationTitles).observe(els.list, {
+    childList: true,
+    subtree: true,
+    characterData: true,
+  });
+  window.addEventListener("resize", scheduleTruncationTitles);
+  scheduleTruncationTitles();
 
   if (!serviceAvailable) {
     await showNoService();
