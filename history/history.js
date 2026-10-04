@@ -220,8 +220,8 @@ let loadGen = 0;
 // true = oldest first (the complete history is loaded once, oldest on top).
 let oldestFirst = false;
 // Session-only matching mode: true = exact (a Netflix row only counts as
-// "recorded" when the FINISHED activity matches date AND time), false =
-// rough (only checks whether the episode is already watched/finished).
+// "recorded" when the FINISHED activity matches date AND time within ±6 h),
+// false = rough (only checks whether the episode is already watched/finished).
 let exactMatch = true;
 // Session-only view filter: hides every row whose badge already says
 // "recorded" (nothing left to transfer), so only the open work stays visible.
@@ -311,10 +311,10 @@ function episodeFinished(it) {
   );
 }
 
-/** True only when this Netflix row is already recorded in Watcharr at the
- * exact same date+time: the episode has a FINISHED activity (EPISODE_ADDED /
- * EPISODE_STATUS_CHANGED) whose customDate matches the row's date+time.
- * customDate is the watched date that was passed to the API. */
+/** True only when this row is already recorded in Watcharr at (roughly) the
+ * same date+time: the episode has a FINISHED activity (EPISODE_ADDED /
+ * EPISODE_STATUS_CHANGED) whose customDate is within ±6 hours of the row's
+ * date+time. customDate is the watched date that was passed to the API. */
 function episodeRecordedAtDate(it) {
   return !!(
     it.isTv &&
@@ -356,7 +356,7 @@ function isTransferred(it) {
     it.episode != null &&
     it.episodeStatusKnown
   ) {
-    // Exact: only the identical watch (same date AND time) is transferred.
+    // Exact: only the identical watch (same date, within ±6 h) is transferred.
     // Rough: any watched/finished episode is transferred.
     return exactMatch
       ? episodeRecordedAtDate(it)

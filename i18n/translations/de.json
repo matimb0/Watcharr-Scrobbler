@@ -135,7 +135,7 @@
     "matchGroup": "Zuordnung",
     "matchExact": "Exakte Treffer",
     "matchRough": "Grobe Treffer",
-    "matchExactTitle": "Zuordnung: Datum und Uhrzeit müssen übereinstimmen.",
+    "matchExactTitle": "Zuordnung: Datum und Uhrzeit müssen innerhalb von ±6 Stunden übereinstimmen.",
     "matchRoughTitle": "Zuordnung: prüft nur, ob die Folge bereits gesehen/beendet ist.",
     "filterGroup": "Filter",
     "hideRecorded": "Bereits erfasste ausblenden",

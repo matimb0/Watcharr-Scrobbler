@@ -547,13 +547,14 @@
    * is recorded with this row's watch date (the watch time the service
    * reported), then that episode is the one that was watched.
    *
-   * This is not a guess: the episode is identified by an exact date+time match
-   * (a small tolerance covers services that report seconds differently), and
-   * nothing is set when the date matches several episodes or none. It recovers
-   * the numbering for titles a service does not report (episode) data for any
-   * more, as long as the watch is already known to Watcharr.
+   * This is not a guess: the episode is identified by a date+time match within
+   * DATE_MATCH_TOLERANCE_SECONDS (services and Watcharr can differ by hours,
+   * e.g. because of timezones), and nothing is set when the date matches
+   * several episodes or none. It recovers the numbering for titles a service
+   * does not report (episode) data for any more, as long as the watch is
+   * already known to Watcharr.
    */
-  const DATE_TOLERANCE_SECONDS = 120;
+  const DATE_MATCH_TOLERANCE_SECONDS = 6 * 60 * 60;
 
   async function resolveEpisodeFromDate(item) {
     if (!item.isTv || !item.match) return false;
@@ -569,7 +570,7 @@
     const hits = [];
     for (const [key, dates] of result.finishedByEp) {
       for (const epoch of dates.keys()) {
-        if (Math.abs(Number(epoch) - seconds) <= DATE_TOLERANCE_SECONDS) {
+        if (Math.abs(Number(epoch) - seconds) <= DATE_MATCH_TOLERANCE_SECONDS) {
           const [season, episode] = String(key).split(":");
           hits.push({ season: Number(season), episode: Number(episode) });
           break;
@@ -994,7 +995,8 @@
   /**
    * Fills the Watcharr-side episode/movie state of one matched item:
    *  - episodeStatus:      current status of the episode (null = not watched),
-   *  - episodeDateMatched: a FINISHED activity exists for the exact date+time,
+   *  - episodeDateMatched: a FINISHED activity exists within the date tolerance
+   *                        (±6 h, see DATE_MATCH_TOLERANCE_SECONDS),
    *  - watcharrDate:       the date Watcharr recorded for this watch (episodes:
    *                        the latest recorded date; movies: the latest watch
    *                        event of the movie detail page),
@@ -1044,16 +1046,26 @@
 
     const rowSeconds = toEpochSeconds(item.date);
     const recorded = result.finishedByEp.get(epKey(item.season, item.episode));
-    item.episodeDateMatched = !!(
-      rowSeconds != null &&
-      recorded &&
-      recorded.has(rowSeconds)
-    );
+    // "Exactly this watch" = a FINISHED activity within the date tolerance, so
+    // services and Watcharr may differ by up to 6 hours (e.g. timezones) and
+    // still count as the same watch. The closest date wins.
+    let matchedSeconds = null;
+    if (rowSeconds != null && recorded && recorded.size) {
+      let bestDelta = Infinity;
+      for (const seconds of recorded.keys()) {
+        const delta = Math.abs(Number(seconds) - rowSeconds);
+        if (delta <= DATE_MATCH_TOLERANCE_SECONDS && delta < bestDelta) {
+          bestDelta = delta;
+          matchedSeconds = Number(seconds);
+        }
+      }
+    }
+    item.episodeDateMatched = matchedSeconds != null;
     if (recorded && recorded.size) {
-      // Exactly this watch, or otherwise the latest date Watcharr holds for
+      // The matching watch, or otherwise the latest date Watcharr holds for
       // this episode (dates on the right side are always Watcharr's own data).
-      if (item.episodeDateMatched) {
-        item.watcharrDate = recorded.get(rowSeconds);
+      if (matchedSeconds != null) {
+        item.watcharrDate = recorded.get(matchedSeconds);
       } else {
         let latest = null;
         for (const iso of recorded.values()) {

@@ -135,7 +135,7 @@
     "matchGroup": "Coincidencia",
     "matchExact": "Coincidencias exactas",
     "matchRough": "Coincidencias aproximadas",
-    "matchExactTitle": "Coincidencia: la fecha y la hora deben coincidir.",
+    "matchExactTitle": "Coincidencia: la fecha y la hora deben coincidir dentro de ±6 horas.",
     "matchRoughTitle": "Coincidencia: solo comprueba si el episodio ya está visto/finalizado.",
     "filterGroup": "Filtro",
     "hideRecorded": "Ocultar los ya registrados",

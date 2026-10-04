@@ -135,7 +135,7 @@
     "matchGroup": "Matching",
     "matchExact": "Exact matches",
     "matchRough": "Rough matches",
-    "matchExactTitle": "Matching: date and time must match.",
+    "matchExactTitle": "Matching: the date and time must match within ±6 hours.",
     "matchRoughTitle": "Matching: only checks whether the episode is already watched/finished.",
     "filterGroup": "Filter",
     "hideRecorded": "Hide already recorded",
