@@ -20,20 +20,51 @@
     };
   }
 
-  async function importMovie(client, item) {
-    const { tmdbId, watchedId, watchedStatus } = item.match;
-
-    // Already on the list: only lift it to FINISHED when needed.
-    if (watchedId) {
-      if (watchedStatus !== "FINISHED") {
-        try {
-          await client.updateWatched(watchedId, { status: "FINISHED" });
-        } catch (err) {
-          return failure(err);
-        }
-      }
+  /**
+   * Records a watch of a MOVIE that is already on the list.
+   *
+   * Watcharr keeps ONE entry per movie, so every further watch of it is an
+   * activity ("play"). Its API has no request that adds a dated play, so this
+   * does what Watcharr's own UI does: a status change adds the activity, and the
+   * date the service reported is then stored on it.
+   */
+  async function addMovieWatch(client, item) {
+    const { watchedId, watchedStatus } = item.match;
+    // The date of this very watch is already recorded -> nothing to add.
+    if (watchedStatus === "FINISHED" && item.watchDateMatched) {
       return { status: "updated" };
     }
+
+    let newActivity = null;
+    try {
+      const resp = await client.updateWatched(watchedId, {
+        status: "FINISHED",
+      });
+      newActivity = resp && resp.newActivity;
+    } catch (err) {
+      return failure(err);
+    }
+
+    // Without a date there is nothing to correct (the activity counts as a
+    // play, dated now).
+    if (!item.date || !newActivity || !newActivity.id) {
+      return { status: "updated" };
+    }
+    try {
+      await client.updateActivityDate(newActivity.id, item.date);
+    } catch (err) {
+      return failure(err);
+    }
+    return { status: "updated" };
+  }
+
+  async function importMovie(client, item) {
+    const { tmdbId, watchedId } = item.match;
+
+    // Already on the list: the watch itself exists, so an import can only add
+    // the watch date this row reports (exact mode) or lift the entry to
+    // FINISHED.
+    if (watchedId) return addMovieWatch(client, item);
 
     try {
       const created = await client.addWatched(
@@ -156,12 +187,13 @@
    * Imports the given entries into Watcharr.
    *
    * They are always sent ordered by watch date ASCENDING, independent of the
-   * order they arrive in and of the display order – so a series imported in
-   * this run is created with its oldest (original) watch date.
+   * order they arrive in and of the display order – so a series/ movie imported
+   * in this run is created with its oldest (original) watch date.
    *
-   * When several episodes of a series that does not exist yet are imported at
-   * once, only the first may create it (POST /watched); every further episode
-   * of the same series reuses that new watched id.
+   * When several entries of the same title are imported at once – episodes of a
+   * series or rewatches of a movie – only the first may create the entry
+   * (POST /watched); every further one reuses that new watched id (an episode is
+   * marked on it, a movie watch becomes another play).
    */
   async function importItems(entries) {
     const settings = await WatcharrSettings.get();
@@ -171,19 +203,17 @@
     const client = new WatcharrClient(settings);
 
     const ordered = entries.slice().sort(byDateAscending);
-    const createdSeries = new Map(); // tmdbId -> watchedId created in this run
+    const created = new Map(); // "tv:12" / "movie:12" -> watchedId of this run
     const results = [];
 
     for (const item of ordered) {
-      // Episode of a series created just above -> mark the episode on that
-      // existing entry instead of adding the series again.
-      if (
-        item.isTv &&
-        item.match &&
-        !item.match.watchedId &&
-        createdSeries.has(item.match.tmdbId)
-      ) {
-        item.match.watchedId = createdSeries.get(item.match.tmdbId);
+      const key = item.match
+        ? (item.isTv ? "tv:" : "movie:") + item.match.tmdbId
+        : null;
+      // Entry created just above -> write into that one instead of creating it
+      // a second time (Watcharr allows one entry per title).
+      if (key && !item.match.watchedId && created.has(key)) {
+        item.match.watchedId = created.get(key);
       }
 
       const result = await importOne(client, item);
@@ -193,7 +223,7 @@
 
       if (result.watchedId && item.match) {
         item.match.watchedId = result.watchedId;
-        if (item.isTv) createdSeries.set(item.match.tmdbId, result.watchedId);
+        created.set(key, result.watchedId);
       }
 
       results.push({

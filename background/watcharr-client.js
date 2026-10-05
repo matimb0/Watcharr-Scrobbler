@@ -77,7 +77,18 @@ class WatcharrClient {
     }
 
     if (resp.status === 204) return null;
-    return resp.json();
+    // Some routes (e.g. PUT /activity/:id) answer 200 with an EMPTY body, so
+    // the body is read as text first – calling resp.json() on it would throw.
+    const text = await resp.text();
+    if (!text) return null;
+    try {
+      return JSON.parse(text);
+    } catch (_) {
+      throw clientError(
+        "watcharr_error",
+        "Watcharr returned an unexpected (non-JSON) response.",
+      );
+    }
   }
 
   /**
@@ -174,6 +185,21 @@ class WatcharrClient {
   /** Update a watched entry (status, rating, thoughts, pinned). */
   updateWatched(id, patch) {
     return this._request("PUT", "/watched/" + Number(id), patch);
+  }
+
+  /**
+   * Sets the watch date of one activity.
+   *
+   * Watcharr has no request that adds a dated watch, so recording a watch of a
+   * MOVIE that is already on the list is done the way Watcharr's own UI does
+   * it: a status change adds the activity (the "play") and its date is stored
+   * afterwards. Only activities (not the watched entry) accept a date, which is
+   * why the two steps are needed.
+   */
+  updateActivityDate(id, watchedDate) {
+    return this._request("PUT", "/activity/" + Number(id), {
+      customDate: watchedDate,
+    });
   }
 
   /** Mark a specific episode as watched (auto-updates the show status). */

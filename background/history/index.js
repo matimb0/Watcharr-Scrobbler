@@ -138,7 +138,7 @@ const WatcharrHistory = (() => {
       matchEpisodeName: null,
       episodeStatus: null, // null | "FINISHED" | "WATCHING" | …
       episodeStatusKnown: false, // false = unknown (lookup failed / no episode)
-      episodeDateMatched: false, // FINISHED at exactly this date+time
+      watchDateMatched: false, // this very watch (date+time) is recorded
       watcharrDate: null, // recorded watch date of that exact match
       selected: false,
       status: "pending",
@@ -173,7 +173,7 @@ const WatcharrHistory = (() => {
       matchEpisodeName: item.matchEpisodeName,
       episodeStatus: item.episodeStatus,
       episodeStatusKnown: item.episodeStatusKnown,
-      episodeDateMatched: item.episodeDateMatched,
+      watchDateMatched: item.watchDateMatched,
       watcharrDate: item.watcharrDate,
       selected: item.selected,
       status: item.status,

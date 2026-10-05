@@ -300,6 +300,10 @@
     if (watched && watched.id) {
       match.watchedId = watched.id;
       match.watchedStatus = watched.status || null;
+      // Date the Watcharr entry itself carries: adding a movie with a watch
+      // date set it, and for movies it is the only place that date is stored
+      // (unlike episodes, which keep it on their activity).
+      match.watchedCreatedAt = watched.createdAt || null;
     }
     return match;
   }
@@ -373,6 +377,7 @@
       ambiguous: !!result.ambiguous,
       watchedId: (result.watched && result.watched.id) || null,
       watchedStatus: (result.watched && result.watched.status) || null,
+      watchedCreatedAt: (result.watched && result.watched.createdAt) || null,
     };
   }
 
@@ -404,7 +409,6 @@
       );
       return null;
     }
-
 
     // Try the file's TMDB title first, then the service's title.
     const names = [];
@@ -868,10 +872,7 @@
     const tmdbId = item.match && item.match.tmdbId;
     await WatcharrMatchCache.forgetMatch(item.title, item.isTv);
     if (item.isTv && tmdbId) {
-      await WatcharrMatchCache.forgetEpisode(
-        tmdbId,
-        episodeProbeName(item),
-      );
+      await WatcharrMatchCache.forgetEpisode(tmdbId, episodeProbeName(item));
     }
   }
 
@@ -927,6 +928,50 @@
 
     movieWatchedCache.set(watchedId, pending);
     return pending;
+  }
+
+  /**
+   * All watch dates Watcharr holds for a MOVIE, newest first: the entry's own
+   * creation date plus the `customDate` of its watch events.
+   *
+   * The creation date is needed because Watcharr only stores the watch date of
+   * a movie there (`POST /watched` sets the entry's date; unlike an episode, the
+   * movie's activity carries no date), while a rewatch ("play") is a later
+   * activity whose date the Watcharr UI stores on the activity itself.
+   */
+  async function getMovieWatchDates(match) {
+    const dates = [];
+    const add = (iso) => {
+      if (iso && toEpochSeconds(iso) != null && dates.indexOf(iso) === -1) {
+        dates.push(iso);
+      }
+    };
+    add(match.watchedCreatedAt);
+    for (const iso of await getWatchDates(match.watchedId)) add(iso);
+    dates.sort((a, b) => toEpochSeconds(b) - toEpochSeconds(a));
+    return dates;
+  }
+
+  /**
+   * The date out of `dates` that is within DATE_MATCH_TOLERANCE_SECONDS of `iso`
+   * and closest to it, or null when none is close enough. Used to tell "this
+   * very watch is already recorded" from "only another watch of it is".
+   */
+  function closestRecordedDate(dates, iso) {
+    const seconds = toEpochSeconds(iso);
+    if (seconds == null) return null;
+    let best = null;
+    let bestDelta = Infinity;
+    for (const candidate of dates) {
+      const candidateSeconds = toEpochSeconds(candidate);
+      if (candidateSeconds == null) continue;
+      const delta = Math.abs(candidateSeconds - seconds);
+      if (delta <= DATE_MATCH_TOLERANCE_SECONDS && delta < bestDelta) {
+        bestDelta = delta;
+        best = candidate;
+      }
+    }
+    return best;
   }
 
   async function getWatchedEpisodes(tmdbId) {
@@ -995,16 +1040,16 @@
   /**
    * Fills the Watcharr-side episode/movie state of one matched item:
    *  - episodeStatus:      current status of the episode (null = not watched),
-   *  - episodeDateMatched: a FINISHED activity exists within the date tolerance
-   *                        (±6 h, see DATE_MATCH_TOLERANCE_SECONDS),
-   *  - watcharrDate:       the date Watcharr recorded for this watch (episodes:
-   *                        the latest recorded date; movies: the latest watch
-   *                        event of the movie detail page),
-   *  - episodeStatusKnown: false = unknown (lookup failed / no episode info).
+   *  - watchDateMatched:   THIS watch (date+time, within ±6 h – see
+   *                        DATE_MATCH_TOLERANCE_SECONDS) is already recorded,
+   *  - watcharrDate:       the date Watcharr recorded for this watch (the
+   *                        matching one, otherwise the latest known),
+   *  - episodeStatusKnown: false = unknown (lookup failed / no episode info)
+   *                        – episodes only; a movie's date never "fails".
    */
   async function resolveItemEpisodeStatus(item) {
     item.episodeStatus = null;
-    item.episodeDateMatched = false;
+    item.watchDateMatched = false;
     item.episodeStatusKnown = false;
     item.matchEpisodeName = null;
     // Watch date Watcharr actually holds for this entry – Watcharr-side data
@@ -1013,12 +1058,14 @@
 
     if (!item.match) return;
 
-    // MOVIES: Watcharr's watch dates come from the entry's watch events (the
-    // search/watchlist DTOs carry no activity).
+    // MOVIES: one Watcharr entry per movie, so every further watch of it is an
+    // activity. Exact matching compares this row's date against all of them.
     if (!item.isTv) {
       if (!item.match.watchedId) return;
-      const dates = await getWatchDates(item.match.watchedId);
-      item.watcharrDate = dates.length ? dates[0] : null;
+      const dates = await getMovieWatchDates(item.match);
+      const matched = closestRecordedDate(dates, item.date);
+      item.watchDateMatched = matched != null;
+      item.watcharrDate = matched != null || !dates.length ? matched : dates[0];
       return;
     }
 
@@ -1044,28 +1091,20 @@
     );
     item.episodeStatus = episode ? episode.status : null;
 
-    const rowSeconds = toEpochSeconds(item.date);
     const recorded = result.finishedByEp.get(epKey(item.season, item.episode));
     // "Exactly this watch" = a FINISHED activity within the date tolerance, so
     // services and Watcharr may differ by up to 6 hours (e.g. timezones) and
     // still count as the same watch. The closest date wins.
-    let matchedSeconds = null;
-    if (rowSeconds != null && recorded && recorded.size) {
-      let bestDelta = Infinity;
-      for (const seconds of recorded.keys()) {
-        const delta = Math.abs(Number(seconds) - rowSeconds);
-        if (delta <= DATE_MATCH_TOLERANCE_SECONDS && delta < bestDelta) {
-          bestDelta = delta;
-          matchedSeconds = Number(seconds);
-        }
-      }
-    }
-    item.episodeDateMatched = matchedSeconds != null;
+    const matched =
+      recorded && recorded.size
+        ? closestRecordedDate(Array.from(recorded.values()), item.date)
+        : null;
+    item.watchDateMatched = matched != null;
     if (recorded && recorded.size) {
       // The matching watch, or otherwise the latest date Watcharr holds for
       // this episode (dates on the right side are always Watcharr's own data).
-      if (matchedSeconds != null) {
-        item.watcharrDate = recorded.get(matchedSeconds);
+      if (matched != null) {
+        item.watcharrDate = matched;
       } else {
         let latest = null;
         for (const iso of recorded.values()) {

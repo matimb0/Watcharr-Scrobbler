@@ -343,17 +343,22 @@ function episodeFinished(it) {
 }
 
 /** True only when this row is already recorded in Watcharr at (roughly) the
- * same date+time: the episode has a FINISHED activity (EPISODE_ADDED /
- * EPISODE_STATUS_CHANGED) whose customDate is within ±6 hours of the row's
- * date+time. customDate is the watched date that was passed to the API. */
-function episodeRecordedAtDate(it) {
-  return !!(
-    it.isTv &&
-    it.season != null &&
-    it.episode != null &&
-    it.episodeStatusKnown &&
-    it.episodeDateMatched
-  );
+ *  same date+time: for an episode the FINISHED activity of THIS episode has a
+ *  `customDate` within ±6 h of the row's date; for a movie one of the watch
+ *  dates Watcharr holds lies within that window.
+ *  `customDate` is the watched date that was passed to the API. */
+function recordedAtDate(it) {
+  if (!it || !it.match || !it.match.watchedId) return false;
+  if (it.isTv) {
+    return !!(
+      it.season != null &&
+      it.episode != null &&
+      it.episodeStatusKnown &&
+      it.watchDateMatched
+    );
+  }
+  // Movie: the entry exists once, so the date decides.
+  return !!it.watchDateMatched;
 }
 
 /** "S1E2" out of two numbers. Season 0 (specials) is valid. */
@@ -389,11 +394,12 @@ function isTransferred(it) {
   ) {
     // Exact: only the identical watch (same date, within ±6 h) is transferred.
     // Rough: any watched/finished episode is transferred.
-    return exactMatch
-      ? episodeRecordedAtDate(it)
-      : episodeSeen(it.episodeStatus);
+    return exactMatch ? recordedAtDate(it) : episodeSeen(it.episodeStatus);
   }
-  // Movie or series without known episode / unknown status -> already in Watcharr.
+  // Movie: Watcharr keeps ONE entry per movie and every further watch is an
+  // activity, so in exact mode only the identical watch is transferred.
+  if (!it.isTv) return exactMatch ? recordedAtDate(it) : true;
+  // Series without known episode / unknown status -> already in Watcharr.
   return true;
 }
 
@@ -443,20 +449,22 @@ function rowBadge(it) {
   if (!it.match) return badge("problem", ts("history.badgeNoMatch"));
   // Already watched, but this exact date is not recorded -> the import adds
   // the date instead of the watch itself.
-  if (
-    exactMatch &&
-    it.isTv &&
-    it.season != null &&
-    it.episode != null &&
-    it.episodeStatusKnown &&
-    episodeFinished(it) &&
-    !episodeRecordedAtDate(it)
-  ) {
+  if (exactMatch && watchedButNotAtDate(it)) {
     return badge("readd", ts("history.badgeReadd"));
   }
   return isTransferred(it)
     ? badge("ok", ts("history.badgeRecorded"))
     : badge("add", ts("history.badgeWillAdd"));
+}
+
+/** Exact mode helper for the teal badge: the title IS watched in Watcharr, but
+ *  not at this row's date (so the import adds a watch date – an episode date,
+ *  or another play of the movie). */
+function watchedButNotAtDate(it) {
+  if (!it.match || !it.match.watchedId) return false;
+  if (recordedAtDate(it)) return false;
+  if (it.isTv) return episodeFinished(it);
+  return it.match.watchedStatus === "FINISHED";
 }
 
 /**

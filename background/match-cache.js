@@ -173,9 +173,9 @@
    * a miss costs one request, a wrong match would cost the user an import into
    * the wrong entry.
    *
-   * The returned object is fresh apart from the identity: `watchedId` and
-   * `watchedStatus` are NOT part of the cache (see the file header) and are
-   * filled by the caller.
+   * The returned object is fresh apart from the identity: the Watcharr state
+   * (`watchedId`, `watchedStatus`, `watchedCreatedAt`) is NOT part of the cache
+   * (see the file header) and is filled by the caller.
    */
   async function lookupMatch(title, year, isTv) {
     await load();
@@ -212,6 +212,7 @@
       ambiguous: !!entry.m.ambiguous,
       watchedId: null,
       watchedStatus: null,
+      watchedCreatedAt: null,
     };
   }
 
