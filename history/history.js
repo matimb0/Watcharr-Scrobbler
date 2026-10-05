@@ -143,8 +143,9 @@ async function applyLanguage(lang) {
   await I18NApi.applyTranslations(currentLanguage, document);
   document.documentElement.lang = currentLanguage;
   // Labels that depend on the CURRENT state (display order, matching mode,
-  // file mode) are not part of the static data-i18n sweep – refresh them here
-  // so they follow a language change as well.
+  // file mode, selected row count) are not part of the static data-i18n sweep
+  // – refresh them here instead, so they follow a language change as well.
+  updateImportButton();
   updateViewMenu();
   updateSourceUI();
 }
@@ -156,6 +157,8 @@ const els = {
   selectNoneBtn: $("#selectNoneBtn"),
   filterBox: $("#filterBox"),
   importBtn: $("#importBtn"),
+  importBtnLabel: $("#importBtnLabel"),
+  importBtnSpinner: $("#importBtnSpinner"),
   // Top bar: the buttons that stay in the bar plus the two dropdown menus
   // ("view" = display order + matching mode, "data" = export/import).
   viewBtn: $("#viewBtn"),
@@ -213,6 +216,10 @@ let loadingInitial = false;
 // page crawl in the background belongs to the export, so no load may run at
 // the same time.
 let exporting = false;
+// Lock while "Import selected" runs: the import writes exactly the selection
+// that was sent, so nothing on the page may change it in the meantime (see
+// setImporting).
+let importing = false;
 // Generation counter: incremented on every fresh load() so that a still
 // pending "load more" response from an older list can be discarded.
 let loadGen = 0;
@@ -854,8 +861,43 @@ function appendItems(newItems) {
 
 function updateImportButton() {
   const n = allItems.filter((it) => it.selected && isSelectable(it)).length;
-  els.importBtn.disabled = n === 0;
-  els.importBtn.textContent = ts("history.importSelected", { count: n });
+  // While an import runs the button stays disabled (the run owns the
+  // selection) and its label states what is going on.
+  els.importBtn.disabled = importing || n === 0;
+  els.importBtnLabel.textContent = importing
+    ? ts("history.importing")
+    : ts("history.importSelected", { count: n });
+}
+
+/**
+ * Locks the page while "Import selected" runs and unlocks it afterwards.
+ *
+ * The background imports the selection it was sent, so nothing may change
+ * meanwhile: the toolbar (select all/none, filter, the import button itself),
+ * the top bar (reload, back, "view"/"data" menus, provider switch) and the rows
+ * (checkboxes, "Change match"). The static controls are disabled directly, the
+ * rows through the `importing` class on the body plus the guards in the row
+ * handlers – so a re-render during the run cannot drop the lock.
+ */
+function setImporting(on) {
+  importing = !!on;
+  document.body.classList.toggle("importing", importing);
+  els.list.setAttribute("aria-busy", String(importing));
+  for (const el of [
+    els.selectAllBtn,
+    els.selectNoneBtn,
+    els.filterBox,
+    els.reloadBtn,
+    els.backBtn,
+    els.serviceBtn,
+    els.viewBtn,
+    els.dataBtn,
+    els.fileInput,
+  ]) {
+    if (el) el.disabled = importing;
+  }
+  els.importBtnSpinner.classList.toggle("hidden", !importing);
+  updateImportButton();
 }
 
 // -- Top bar menus ------------------------------------------------------------
@@ -1394,6 +1436,12 @@ els.list.addEventListener("change", (e) => {
   if (e.target && e.target.classList.contains("sel")) {
     const row = e.target.closest(".row");
     const it = allItems.find((x) => x.key === row.dataset.key);
+    // A running import owns the selection: undo the toggle instead of
+    // changing what is being imported.
+    if (importing) {
+      e.target.checked = !!(it && it.selected);
+      return;
+    }
     if (it) it.selected = e.target.checked;
     updateImportButton();
   }
@@ -1405,6 +1453,7 @@ let searchTimer = null;
 els.list.addEventListener("click", async (e) => {
   const btn = e.target.closest(".rematch-btn");
   if (!btn) return;
+  if (importing) return; // locked while an import runs (see setImporting)
   const row = btn.closest(".row");
   const key = row.dataset.key;
   const it = allItems.find((x) => x.key === key);
@@ -1705,9 +1754,8 @@ function importSummary(results) {
 // -- Import -------------------------------------------------------------------
 els.importBtn.addEventListener("click", async () => {
   const keys = allItems.filter((it) => it.selected).map((it) => it.key);
-  if (!keys.length) return;
-  els.importBtn.disabled = true;
-  els.importBtn.textContent = ts("history.importing");
+  if (!keys.length || importing) return;
+  setImporting(true);
   setStatus("info", await t("history.importingTitles", { count: keys.length }));
   try {
     const resp = await browser.runtime.sendMessage({
@@ -1754,8 +1802,7 @@ els.importBtn.addEventListener("click", async () => {
   } catch (err) {
     setStatus("error", err.message);
   } finally {
-    els.importBtn.disabled = false;
-    updateImportButton();
+    setImporting(false);
   }
 });
 
@@ -2478,6 +2525,14 @@ async function refreshProviders(detection, reason) {
 
   // File-import mode: tab events must not replace the imported list.
   if (fileMode) {
+    renderServiceToggle(available);
+    return false;
+  }
+
+  // An import runs against the rows as they are (its result is applied to
+  // them), so a provider switch or a closed service tab must not clear or
+  // reload the list mid-run.
+  if (importing) {
     renderServiceToggle(available);
     return false;
   }

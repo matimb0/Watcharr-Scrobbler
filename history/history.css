@@ -480,6 +480,59 @@ button.primary:hover:not(:disabled) {
   background: var(--accent-2);
 }
 
+/* Import button: the label sits next to the spinner, so both keep their place
+   while the run is in progress. */
+#importBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Spinner of the import button ("Import selected" is running). */
+#importBtn .spinner {
+  width: 13px;
+  height: 13px;
+  flex: none;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  border-top-color: #fff;
+  animation: spin 0.7s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Locked while an import runs: the button shows progress, so it must not look
+   dimmed like an unavailable one. */
+body.importing #importBtn:disabled {
+  opacity: 1;
+  cursor: progress;
+}
+
+/* Everything that could change what is being imported is locked while an import
+   runs (the class is set by history.js -> setImporting): the toolbar, the row
+   checkboxes and "Change match". The row handlers additionally ignore input, so
+   the lock also holds when only the keyboard is used. */
+body.importing .toolbar,
+body.importing .row .check,
+body.importing .row-actions {
+  pointer-events: none;
+}
+
+body.importing .row .check,
+body.importing .row-actions {
+  opacity: 0.6;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #importBtn .spinner {
+    animation-duration: 2s;
+  }
+}
+
 button:disabled {
   opacity: 0.5;
   cursor: not-allowed;

@@ -233,13 +233,19 @@
         placeholder="Filter …"
         autocomplete="off"
       />
-      <button
-        id="importBtn"
-        class="primary"
-        disabled
-        data-i18n="history.importSelected"
-      >
-        Import selected (0)
+      <!-- Import in progress: the label lives in its own span so the spinner
+           can sit next to it, and the button keeps its place in the bar. The
+           label carries a {count} placeholder, so the i18n sweep leaves it to
+           updateImportButton(). -->
+      <button id="importBtn" class="primary" disabled>
+        <span
+          id="importBtnSpinner"
+          class="spinner hidden"
+          aria-hidden="true"
+        ></span>
+        <span id="importBtnLabel" data-i18n="history.importSelected">
+          Import selected (0)
+        </span>
       </button>
     </section>
 
