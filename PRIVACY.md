@@ -40,9 +40,11 @@ den unten genannten Empfängern an, weil dorthin eine Verbindung aufgebaut wird.
 
 ### 3. Wo die Daten gespeichert werden
 
-Ausschließlich **lokal in deinem Browser** (`browser.storage.local`) auf deinem
-Gerät. Es werden keine Nutzerdaten auf Servern des Entwicklers oder bei Dritten
-gespeichert.
+Ausschließlich **lokal in deinem Browser** auf deinem Gerät – dauerhaft in
+`browser.storage.local`, die geladene Historie zusätzlich für die Dauer der
+Browser-Sitzung in `browser.storage.session` (nur im Arbeitsspeicher, wird beim
+Schließen des Browsers verworfen). Es werden keine Nutzerdaten auf Servern des
+Entwicklers oder bei Dritten gespeichert.
 
 ### 4. Wohin Daten übertragen werden
 
@@ -137,8 +139,10 @@ recipients listed in section 4, because a connection to them is established.
 
 ### 3. Where data is stored
 
-Only **locally in your browser** (`browser.storage.local`) on your device. No
-user data is stored on developer or third-party servers.
+Only **locally in your browser** on your device – permanently in
+`browser.storage.local`, plus the loaded history for the duration of the browser
+session in `browser.storage.session` (memory only, discarded when the browser is
+closed). No user data is stored on developer or third-party servers.
 
 ### 4. Where data is transmitted
 

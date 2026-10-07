@@ -220,6 +220,8 @@
     "unmatchTitle": "Quitar la coincidencia: la entrada queda sin asignar y no se vuelve a buscar.",
     "unmatchedSet": "\"{title}\" marcado como sin coincidencia.",
     "matchCouldNotBeUnmatched": "No se pudo quitar la coincidencia.",
+    "backgroundUnreachable": "El servicio en segundo plano no respondió. Vuelve a cargar la página e inténtalo de nuevo.",
+    "listOutOfDate": "La lista ya no estaba actualizada y se ha vuelto a cargar; inténtalo de nuevo.",
     "importing": "Importando …",
     "importingTitles": "Importando {count} títulos a Watcharr …",
     "importCompleted": "Importación completada: {summary}",

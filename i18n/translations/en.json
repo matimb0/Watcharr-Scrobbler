@@ -220,6 +220,8 @@
     "unmatchTitle": "Remove the match: this entry stays unmatched and is not searched again.",
     "unmatchedSet": "\"{title}\" marked as unmatched.",
     "matchCouldNotBeUnmatched": "Match could not be removed.",
+    "backgroundUnreachable": "The background service did not respond. Please reload the page and try again.",
+    "listOutOfDate": "The list was out of date and has been reloaded – please try again.",
     "importing": "Importing …",
     "importingTitles": "Importing {count} titles to Watcharr …",
     "importCompleted": "Import completed: {summary}",

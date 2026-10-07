@@ -9,6 +9,10 @@
  *
  * Exposes `WatcharrHistory`, which is what background.js talks to. Loaded as a
  * classic script; all modules it uses must be loaded before it.
+ *
+ * The loaded list is mirrored into session storage, so it survives the
+ * background being suspended and started again while the history page stays
+ * open (see "Outliving a background restart" below).
  */
 "use strict";
 
@@ -36,7 +40,11 @@ const WatcharrHistory = (() => {
   let loading = false; // batch currently loading?
   let loadError = null; // last load error (message)
   let loadErrorCode = null; // stable i18n code of the last load error
-  let seq = 0; // sequence for stable item keys
+  // Sequence for the row keys. It deliberately keeps running over a "reload"
+  // (see load) instead of starting at 0 again: the page addresses its rows by
+  // these keys, and a page that still shows the previous list must never hit a
+  // DIFFERENT row with an old key – an unknown key has to stay unknown.
+  let seq = 0;
   let oldestFirst = false; // show the history oldest first?
   let delivered = 0; // oldest-first: entries already handed to the UI
   let cancelRequested = false; // abort a long load / export
@@ -58,6 +66,119 @@ const WatcharrHistory = (() => {
   // Identifies one fresh load: paged content scripts (Prime Video) reset their
   // internal buffer when it changes.
   let historyLoadId = 0;
+
+  /* ------------------------------------------------------------------ *
+   * Outliving a background restart
+   * ------------------------------------------------------------------ */
+
+  /*
+   * The loaded list lives in this module's memory, but the background itself
+   * does NOT: Chrome's MV3 service worker and Firefox's event page are
+   * suspended after a short idle time, and a suspension throws away every
+   * variable above. The history page, however, keeps its rows (and their keys)
+   * on screen. Without a snapshot the next row action would therefore look up
+   * a key the restarted background does not know any more, and "Change match"
+   * / "No match" stopped working until the page was reloaded – reloading only
+   * helped because it loaded the list into the fresh background instance.
+   *
+   * Session storage is exactly the right place for it: it is kept in memory
+   * for the duration of the browser session and shared across background
+   * restarts, but is gone once the browser (and with it any open page) is
+   * closed. The rollback to the pre-snapshot behaviour, if writing ever fails
+   * (e.g. quota on a huge history), is the page's own "list out of date"
+   * recovery (see history/history.js).
+   */
+  const SESSION_KEY = "historySession";
+  const sessionStore = (browser.storage && browser.storage.session) || null;
+
+  let sessionWrite = Promise.resolve(); // serializes the writes
+  let sessionRead = null; // the one restore per background start
+  let sessionBroken = !sessionStore; // no session storage / write failed
+
+  /** The part of the state that has to outlive this background instance.
+   *  Transient flags (running load/export, cancel request, load error) are
+   *  deliberately left out – they belong to the instance that set them. */
+  function sessionSnapshot() {
+    return {
+      items,
+      seq,
+      page,
+      total,
+      done,
+      delivered,
+      oldestFirst,
+      serviceId,
+      source,
+      fileRows,
+      fileName,
+      historyLoadId,
+    };
+  }
+
+  /** Writes the current state to session storage. Never rejects, and the
+   *  writes keep their order (a later one always wins). */
+  function persistState() {
+    if (sessionBroken) return sessionWrite;
+    const data = sessionSnapshot();
+    sessionWrite = sessionWrite
+      .then(() => sessionStore.set({ [SESSION_KEY]: data }))
+      .catch((err) => {
+        sessionBroken = true;
+        logErr(
+          "persistState: could not store the history session:",
+          err.message,
+        );
+      });
+    return sessionWrite;
+  }
+
+  /** Takes over the state of the previous background instance. */
+  async function restoreState() {
+    if (!sessionStore) return;
+    try {
+      const data = (await sessionStore.get(SESSION_KEY))[SESSION_KEY];
+      if (!data) return;
+      // Rows without a key cannot be addressed by the page – drop them (a
+      // snapshot written by an older build must not break the lookup).
+      items = (Array.isArray(data.items) ? data.items : []).filter(
+        (item) => item && typeof item.key === "string",
+      );
+      itemMap.clear();
+      for (const item of items) itemMap.set(item.key, item);
+      if (Number.isFinite(data.seq)) seq = data.seq;
+      if (Number.isFinite(data.page)) page = data.page;
+      if (Number.isFinite(data.total)) total = data.total;
+      if (Number.isFinite(data.delivered)) delivered = data.delivered;
+      done = !!data.done;
+      oldestFirst = !!data.oldestFirst;
+      if (typeof data.serviceId === "string") serviceId = data.serviceId;
+      source = data.source === "file" ? "file" : "service";
+      fileRows = Array.isArray(data.fileRows) ? data.fileRows : [];
+      fileName = typeof data.fileName === "string" ? data.fileName : "";
+      if (Number.isFinite(data.historyLoadId)) {
+        historyLoadId = data.historyLoadId;
+      }
+      log("restoreState: took over", items.length, "entries of the last list");
+    } catch (err) {
+      logErr(
+        "restoreState: could not restore the history session:",
+        err.message,
+      );
+    }
+  }
+
+  /**
+   * Waits until the state of the previous background instance is in place.
+   *
+   * Must be awaited BEFORE anything is set from a request (service, source,
+   * order), because restoring overwrites exactly those – see
+   * background/messages/history.js, which awaits it before every history
+   * message.
+   */
+  function ready() {
+    if (!sessionRead) sessionRead = restoreState();
+    return sessionRead;
+  }
 
   /* ------------------------------------------------------------------ *
    * Session settings
@@ -286,11 +407,15 @@ const WatcharrHistory = (() => {
     loading = false;
     loadError = null;
     loadErrorCode = null;
-    seq = 0;
     delivered = 0;
     cancelRequested = false;
     matcher.clearCache();
     historyLoadId++;
+
+    // The previous list is gone for good now (the page cleared it as well), so
+    // the snapshot must not survive a restart either – even when the load below
+    // fails. `fetchMore` / `deliverBatch` then store the new rows.
+    await persistState();
 
     const result = oldestFirst
       ? await loadEntireHistory()
@@ -337,6 +462,7 @@ const WatcharrHistory = (() => {
       done = !!pageDone || entries.length === 0;
       if (done) log("fetchMore: last page reached, total", total);
 
+      await persistState();
       return { items: newItems.map(serializeItem), total, done };
     } finally {
       loading = false;
@@ -396,6 +522,7 @@ const WatcharrHistory = (() => {
     delivered += chunk.length;
     log("deliverBatch:", chunk.length, "entries (", delivered, "/", total, ")");
     await Promise.all(chunk.map((item) => resolveItem(item)));
+    await persistState();
     return {
       items: chunk.map(serializeItem),
       total,
@@ -491,6 +618,7 @@ const WatcharrHistory = (() => {
     item.error = null;
     item.errorCode = null;
     item.selected = !!item.match;
+    await persistState();
     return serializeItem(item);
   }
 
@@ -524,6 +652,7 @@ const WatcharrHistory = (() => {
     item.status = "pending";
     item.error = null;
     item.errorCode = null;
+    await persistState();
     return serializeItem(item);
   }
 
@@ -558,6 +687,7 @@ const WatcharrHistory = (() => {
     item.errorCode = null;
     // Clears the Watcharr-side episode state (no match -> nothing to look up).
     await matcher.resolveItemEpisodeStatus(item);
+    await persistState();
     return serializeItem(item);
   }
 
@@ -570,7 +700,10 @@ const WatcharrHistory = (() => {
       if (!itemMap.has(item.key)) itemMap.set(item.key, item);
       entries.push(item);
     }
-    return importer.importItems(entries);
+    const results = await importer.importItems(entries);
+    // The import wrote status/error/watchedId onto the rows.
+    await persistState();
+    return results;
   }
 
   /* ------------------------------------------------------------------ *
@@ -750,5 +883,6 @@ const WatcharrHistory = (() => {
     getExportProgress,
     collectForExport,
     loadFromFile,
+    ready,
   };
 })();

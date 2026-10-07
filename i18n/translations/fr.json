@@ -220,6 +220,8 @@
     "unmatchTitle": "Retirer la correspondance : l'entrée reste sans attribution et n'est plus recherchée.",
     "unmatchedSet": "\"{title}\" marqué comme sans correspondance.",
     "matchCouldNotBeUnmatched": "La correspondance n'a pas pu être retirée.",
+    "backgroundUnreachable": "Le service d'arrière-plan n'a pas répondu. Rechargez la page et réessayez.",
+    "listOutOfDate": "La liste n'était plus à jour et a été rechargée – veuillez réessayer.",
     "importing": "Importation …",
     "importingTitles": "Importation de {count} titres vers Watcharr …",
     "importCompleted": "Importation terminée : {summary}",

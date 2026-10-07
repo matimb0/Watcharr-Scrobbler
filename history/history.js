@@ -1677,16 +1677,82 @@ els.list.addEventListener("click", async (e) => {
   });
 });
 
+/**
+ * Browser messages that mean "the background could not be reached at all": the
+ * message channel is gone because its event page / service worker was suspended
+ * (or the extension was reloaded). Retrying on this page cannot help – it needs
+ * a refresh – so the user is told exactly that instead of the raw browser text.
+ */
+const BACKGROUND_GONE_RE =
+  /could not establish connection|receiving end does not exist|message port closed|extension context invalidated/i;
+
+/**
+ * Sends one history message and turns the failure mode the row actions used to
+ * die of into a reportable error: when the background cannot answer,
+ * `browser.runtime.sendMessage` REJECTS. Unhandled, that made the click on
+ * "Change match" / "No match" look like a no-op: the popover closed and nothing
+ * else happened.
+ */
+async function sendHistoryMessage(message) {
+  try {
+    return await browser.runtime.sendMessage(message);
+  } catch (err) {
+    const raw = (err && err.message) || String(err);
+    throw new Error(
+      BACKGROUND_GONE_RE.test(raw)
+        ? await t("history.backgroundUnreachable")
+        : await describeError(err, "history.backgroundUnreachable"),
+    );
+  }
+}
+
+/**
+ * True when the background answered, but without the row: it does not know this
+ * key any more, so the list on this page no longer matches the background's one
+ * (another history page replaced it, or the background could not restore its
+ * snapshot after a restart – see background/history/index.js). Without that
+ * distinction the answer would look like an ordinary failure and the row would
+ * stay unchangeable.
+ */
+function isUnknownRow(resp) {
+  return !!(resp && resp.ok && !resp.item);
+}
+
+/**
+ * Last-resort recovery for a list the background cannot resolve any more: load
+ * the current list again and say why. The manual match decisions live in the
+ * persistent match cache, so they survive the refresh; only the page's own
+ * state has to be rebuilt. Row actions normally never get here: the loaded list
+ * is kept in session storage and taken over after a background restart (see
+ * background/history/index.js).
+ */
+async function refreshStaleList() {
+  const ok = await load();
+  // The reason is only reported when the refresh really worked – a load
+  // failure has its own (more important) message on screen.
+  if (ok) showStatusPopup("info", await t("history.listOutOfDate"));
+}
+
 /** Applies a new match (`result`, a TMDB search hit) and/or a corrected
  *  season/episode (`episode`) to one history row. */
 async function rematch(key, result, episode) {
-  const resp = await browser.runtime.sendMessage({
-    type: "watcharr:history:rematch",
-    key,
-    result,
-    season: episode ? episode.season : null,
-    episode: episode ? episode.episode : null,
-  });
+  let resp;
+  try {
+    resp = await sendHistoryMessage({
+      type: "watcharr:history:rematch",
+      key,
+      result,
+      season: episode ? episode.season : null,
+      episode: episode ? episode.episode : null,
+    });
+  } catch (err) {
+    setStatus("error", err.message);
+    return;
+  }
+  if (isUnknownRow(resp)) {
+    await refreshStaleList();
+    return;
+  }
   if (resp && resp.ok && resp.item) {
     const it = allItems.find((x) => x.key === key);
     if (it) {
@@ -1710,20 +1776,30 @@ async function rematch(key, result, episode) {
       );
     }
   } else {
-    const msg = resp
-      ? await describeError(resp, "history.matchCouldNotBeUpdated")
-      : ts("history.matchCouldNotBeUpdated");
-    setStatus("error", msg);
+    setStatus(
+      "error",
+      await describeError(resp, "history.matchCouldNotBeUpdated"),
+    );
   }
 }
 
 /** Drops a manual decision (picked match and/or corrected season/episode) for
  *  one row and shows the automatic assignment again. */
 async function resetMatch(key) {
-  const resp = await browser.runtime.sendMessage({
-    type: "watcharr:history:resetMatch",
-    key,
-  });
+  let resp;
+  try {
+    resp = await sendHistoryMessage({
+      type: "watcharr:history:resetMatch",
+      key,
+    });
+  } catch (err) {
+    setStatus("error", err.message);
+    return;
+  }
+  if (isUnknownRow(resp)) {
+    await refreshStaleList();
+    return;
+  }
   if (resp && resp.ok && resp.item) {
     const it = allItems.find((x) => x.key === key);
     if (it) Object.assign(it, resp.item);
@@ -1733,20 +1809,27 @@ async function resetMatch(key) {
       ts("history.matchReset", { title: resp.item.title || key }),
     );
   } else {
-    const msg = resp
-      ? await describeError(resp, "history.matchCouldNotBeReset")
-      : ts("history.matchCouldNotBeReset");
-    setStatus("error", msg);
+    setStatus(
+      "error",
+      await describeError(resp, "history.matchCouldNotBeReset"),
+    );
   }
 }
 
 /** Marks one row as deliberately unmatched: the automatic assignment is dropped
  *  and the row stays unmatched on the next load. */
 async function setUnmatched(key) {
-  const resp = await browser.runtime.sendMessage({
-    type: "watcharr:history:unmatch",
-    key,
-  });
+  let resp;
+  try {
+    resp = await sendHistoryMessage({ type: "watcharr:history:unmatch", key });
+  } catch (err) {
+    setStatus("error", err.message);
+    return;
+  }
+  if (isUnknownRow(resp)) {
+    await refreshStaleList();
+    return;
+  }
   if (resp && resp.ok && resp.item) {
     const it = allItems.find((x) => x.key === key);
     if (it) Object.assign(it, resp.item);
@@ -1756,10 +1839,10 @@ async function setUnmatched(key) {
       ts("history.unmatchedSet", { title: resp.item.title || key }),
     );
   } else {
-    const msg = resp
-      ? await describeError(resp, "history.matchCouldNotBeUnmatched")
-      : ts("history.matchCouldNotBeUnmatched");
-    setStatus("error", msg);
+    setStatus(
+      "error",
+      await describeError(resp, "history.matchCouldNotBeUnmatched"),
+    );
   }
 }
 
@@ -1785,14 +1868,22 @@ els.importBtn.addEventListener("click", async () => {
   if (!keys.length || importing) return;
   setImporting(true);
   setStatus("info", await t("history.importingTitles", { count: keys.length }));
+  // Set when the background answered for fewer rows than it was asked about –
+  // the page then shows a list the background no longer has (see
+  // refreshStaleList); the refresh runs after the lock is released.
+  let staleList = false;
   try {
-    const resp = await browser.runtime.sendMessage({
+    const resp = await sendHistoryMessage({
       type: "watcharr:history:import",
       keys,
     });
     if (!resp || !resp.ok)
       throw new Error(await describeError(resp, "history.loadingFailed"));
     const results = resp.results || [];
+    // The background answers with exactly one result per row it knows, so
+    // fewer results than keys means unknown rows – without this check the run
+    // would report "nothing to do" for rows that were never sent.
+    staleList = results.length < keys.length;
     const byKey = {};
     for (const r of results) byKey[r.key] = r;
     for (const it of allItems) {
@@ -1832,6 +1923,7 @@ els.importBtn.addEventListener("click", async () => {
   } finally {
     setImporting(false);
   }
+  if (staleList) await refreshStaleList();
 });
 
 // -- Export of the complete history into a file -------------------------------

@@ -220,6 +220,8 @@
     "unmatchTitle": "Zuordnung entfernen: der Eintrag bleibt nicht zugeordnet und wird nicht erneut gesucht.",
     "unmatchedSet": "\"{title}\" als nicht zugeordnet markiert.",
     "matchCouldNotBeUnmatched": "Zuordnung konnte nicht entfernt werden.",
+    "backgroundUnreachable": "Der Hintergrunddienst hat nicht geantwortet. Bitte lade die Seite neu und versuche es erneut.",
+    "listOutOfDate": "Die Liste war nicht mehr aktuell und wurde neu geladen – bitte versuche es erneut.",
     "importing": "Importieren …",
     "importingTitles": "Importiere {count} Titel nach Watcharr …",
     "importCompleted": "Import abgeschlossen: {summary}",

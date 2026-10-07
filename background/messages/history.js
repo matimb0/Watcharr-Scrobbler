@@ -142,7 +142,15 @@
   /** Handles the message, or returns undefined when it belongs to another module. */
   async function handle(msg) {
     const fn = msg && HANDLERS[msg.type];
-    return fn ? fn(msg) : undefined;
+    if (!fn) return undefined;
+    // The background may have been suspended and started again since the page
+    // loaded its list (Chrome's MV3 service worker, Firefox's event page). The
+    // rows on the page are addressed by the keys of THAT list, so it has to be
+    // in place before a handler reads or overwrites anything from the request
+    // (service, source, order) – otherwise "Change match" / "No match" would
+    // report an unknown row after every suspension, until the page is reloaded.
+    await WatcharrHistory.ready();
+    return fn(msg);
   }
 
   globalThis.WatcharrMessageHistory = { handle };
