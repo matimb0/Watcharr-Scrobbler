@@ -31,7 +31,7 @@ integrated as services.
 - **History page:** Import your previous viewing history (Netflix, Prime
   Video or Jellyfin) in a controlled way – with comparison, match
   correction, and selective import (movies as watched series episodes
-  individually).
+  individually). Exports of several services can be merged into one file.
 
 <br>
 
@@ -157,6 +157,28 @@ side by side, and the selected ones can be imported with **“Import selected”
   `ids.tmdb`, `Film`/`Series` type names, …).
 - **“Back”** returns to the history of the open service tab; **Export** (in the
   same **“Data”** menu) is only available for the service history.
+
+<br>
+
+## Merging export files
+
+**“Data” › “Merge files …”** combines several export files of this add-on into
+one – for example the **Netflix** export and the **Prime Video** export, so both
+services end up in a single list and a single file.
+
+- **“Choose files …”** takes any number of CSV/JSON exports (the picker is
+  multi-select); they are listed with their entry count and can be removed
+  again before merging.
+- **Duplicates are dropped**: an entry counts as the same when title, type,
+  season, episode and watch date (to the minute) match – so a title that was
+  watched on two services is only kept once. Of two duplicates the richer copy
+  survives (with TMDB data / episode title).
+- The result is **downloaded** in the chosen format like a normal export and –
+  unless switched off – **put into the list** right away, so it can be matched
+  and imported into Watcharr without a detour.
+- The merged file keeps the columns of a normal export (including the
+  `service`/`serviceId` of each entry) and is therefore importable again, both
+  here and in other services.
 
 <br>
 

@@ -158,7 +158,8 @@
           </div>
 
           <!-- Data: the complete viewing history of the service as a file
-               (export) or the other way round (import). -->
+               (export), the other way round (import) or several exported
+               files combined into one (merge). -->
           <div class="menu-wrap">
             <button
               id="dataBtn"
@@ -201,6 +202,16 @@
                 data-i18n="history.loadFile"
               >
                 Load from file …
+              </button>
+              <button
+                id="mergeBtn"
+                class="menu-item"
+                type="button"
+                role="menuitem"
+                data-i18n="history.mergeBtn"
+                data-i18n-title="history.mergeBtnTitle"
+              >
+                Merge files …
               </button>
             </div>
           </div>
@@ -347,6 +358,92 @@
       </div>
     </div>
 
+    <!-- Merge of several exported history files (e.g. the Netflix export and
+         the Prime Video export) into one file. The chosen files are read and
+         combined in the page; duplicates are dropped. The result is downloaded
+         and – unless switched off – handed to the list like a single import. -->
+    <div id="mergeModal" class="modal-overlay hidden">
+      <div
+        class="modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="mergeTitle"
+      >
+        <h2 id="mergeTitle" data-i18n="history.mergeTitle">
+          Merge export files
+        </h2>
+        <p class="modal-text" data-i18n="history.mergeText">
+          Several exported history files are combined into one file. Entries
+          that appear in more than one file are only kept once.
+        </p>
+        <div class="merge-pick">
+          <button
+            id="mergePickBtn"
+            class="ghost"
+            type="button"
+            data-i18n="history.mergePick"
+          >
+            Choose files …
+          </button>
+          <span
+            id="mergePickHint"
+            class="export-label"
+            data-i18n="history.mergePickHint"
+          >
+            CSV or JSON exports of our add-on.
+          </span>
+        </div>
+        <ul id="mergeFileList" class="merge-files"></ul>
+        <div class="export-options">
+          <span class="export-label" data-i18n="history.exportFormatLabel">
+            Format
+          </span>
+          <label class="export-option">
+            <input type="radio" name="mergeFormat" value="csv" checked />
+            <span>CSV</span>
+          </label>
+          <label class="export-option">
+            <input type="radio" name="mergeFormat" value="json" />
+            <span>JSON</span>
+          </label>
+        </div>
+        <label class="export-option export-tmdb">
+          <input type="checkbox" id="mergeLoadList" checked />
+          <span data-i18n="history.mergeLoadLabel">
+            Also load the merged entries into the list
+          </span>
+        </label>
+        <p class="export-hint" data-i18n="history.mergeLoadHint">
+          The merged entries are put into the comparison list afterwards, so
+          they can be imported into Watcharr right away.
+        </p>
+        <p id="mergeStatus" class="modal-text export-progress hidden"></p>
+        <div class="modal-actions">
+          <button id="mergeCancelBtn" class="ghost" data-i18n="history.cancel">
+            Cancel
+          </button>
+          <button
+            id="mergeOkBtn"
+            class="primary"
+            type="button"
+            disabled
+            data-i18n="history.mergeStart"
+          >
+            Merge
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Multi-file picker of the merge dialog (CSV/JSON exports). -->
+    <input
+      id="mergeFileInput"
+      class="hidden"
+      type="file"
+      multiple
+      accept=".csv,.json,text/csv,application/json"
+    />
+
     <script src="../i18n/locale.js"></script>
     <script src="../i18n/messages.js"></script>
     <script src="../i18n/dom.js"></script>
@@ -354,8 +451,14 @@
     <script src="../background/services.js"></script>
     <!-- History-file feature: the export side is needed here to serialize the
          rows into the CSV/JSON text of the downloaded file (the import side
-         runs in the background, where the file is parsed). -->
+         runs in the background, where the file is parsed). The import parser
+         and the merge helpers are needed for "Merge files": the chosen files
+         are read and merged in the page before the result is downloaded and/or
+         handed to the background like a single file. Load order:
+         import.js (parses) -> export.js (serializes) -> merge.js (combines). -->
+    <script src="../content/history-file/import.js"></script>
     <script src="../content/history-file/export.js"></script>
+    <script src="../content/history-file/merge.js"></script>
     <script src="history.js"></script>
   </body>
 </html>

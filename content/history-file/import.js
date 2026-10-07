@@ -71,6 +71,8 @@
   ];
   const FILE_TMDB_ID_KEYS = ["tmdbid", "tmdb"];
   const FILE_TMDB_YEAR_KEYS = ["tmdbyear"];
+  const FILE_SERVICE_KEYS = ["service", "servicename", "provider", "source"];
+  const FILE_SERVICE_ID_KEYS = ["serviceid", "providerid", "sourceid"];
 
   const FILE_TV_TYPES =
     /^(tv|tvshow|tvseries|show|shows|series|serie|episode)$/;
@@ -192,6 +194,11 @@
       tmdbId,
       tmdbTitle: tmdbTitle || null,
       tmdbYear,
+      // Which service the row came from (our export writes both columns). Only
+      // used to name the sources when several files are merged and to keep
+      // that information in the merged file – the import itself ignores it.
+      service: toTrimmedString(pickField(o, FILE_SERVICE_KEYS)) || null,
+      serviceId: toTrimmedString(pickField(o, FILE_SERVICE_ID_KEYS)) || null,
     };
   }
 

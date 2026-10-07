@@ -184,6 +184,15 @@ const els = {
   exportCancelBtn: $("#exportCancelBtn"),
   exportEnrich: $("#exportEnrich"),
   exportEnrichHint: $("#exportEnrichHint"),
+  mergeBtn: $("#mergeBtn"),
+  mergeModal: $("#mergeModal"),
+  mergePickBtn: $("#mergePickBtn"),
+  mergeFileList: $("#mergeFileList"),
+  mergeFileInput: $("#mergeFileInput"),
+  mergeLoadList: $("#mergeLoadList"),
+  mergeStatus: $("#mergeStatus"),
+  mergeOkBtn: $("#mergeOkBtn"),
+  mergeCancelBtn: $("#mergeCancelBtn"),
   serviceBtn: $("#serviceBtn"),
   pageTitle: $("#pageTitle"),
   pageSubtitle: $("#pageSubtitle"),
@@ -239,6 +248,11 @@ let hideTransferred = false;
 // switching the order can re-send it to the background).
 let fileMode = false;
 let loadedFile = null; // { text, name }
+
+// Merge dialog: the files chosen so far with their parsed rows
+// ([{ name, rows, error }]) and the lock while the merged file is written.
+let mergeFiles = [];
+let merging = false;
 
 function escapeHtml(s) {
   return String(s == null ? "" : s)
@@ -1086,22 +1100,33 @@ async function loadFile(file) {
     );
     return;
   }
+  await applyLoadedFile({ text, name: file.name || "" });
+}
+
+/**
+ * Makes an already read file text the source of the list (file mode).
+ *
+ * Used by "Load from file …" and by the merge dialog, which hands the merged
+ * file over the same way. When the list cannot use the text (unreadable/empty
+ * file, no Watcharr, …), the previous source is restored so the page does not
+ * stay in a broken file state.
+ */
+async function applyLoadedFile(file) {
   const previous = loadedFile;
-  loadedFile = { text, name: file.name || "" };
+  loadedFile = { text: file.text, name: file.name || "" };
   fileMode = true;
   fileName = file.name || ""; // shown in the header while the file loads
   closeOrderConfirm(); // a pending order dialog belongs to the old list
   updateSourceUI();
-  applyServiceHeader();
+  await applyServiceHeader();
   const ok = await load();
   if (!ok) {
-    // Nothing was imported (unreadable/empty file, no Watcharr, …) – go back to
-    // the service list so the page does not stay in a broken file state.
     loadedFile = previous;
     fileMode = false;
     updateSourceUI();
-    applyServiceHeader();
+    await applyServiceHeader();
   }
+  return ok;
 }
 
 /** Leaves file mode and shows the service history again. */
@@ -1413,6 +1438,9 @@ document.addEventListener("keydown", (e) => {
   } else if (!exporting && !els.exportModal.classList.contains("hidden")) {
     // Esc does not close the export dialog while the crawl is running.
     closeExportDialog();
+  } else if (!merging && !els.mergeModal.classList.contains("hidden")) {
+    // … nor the merge dialog while the merged file is being written.
+    closeMergeDialog();
   }
 });
 
@@ -1989,6 +2017,207 @@ els.exportCancelBtn.addEventListener("click", async () => {
 // Click on the backdrop closes the dialog (not while an export is running).
 els.exportModal.addEventListener("click", (e) => {
   if (e.target === els.exportModal && !exporting) closeExportDialog();
+});
+
+// -- Merge of several export files -------------------------------------------
+// Combines any number of exported history files (e.g. the Netflix export and
+// the Prime Video export) into ONE file. The files are parsed with the import
+// side, their rows are merged and deduplicated (pure data processing in
+// content/history-file/merge.js, which also returns the export row shape). The
+// result is downloaded like a normal export and – unless switched off – handed
+// to the list as a file import, so it can be imported into Watcharr right away.
+
+/** Chosen output format of the merged file ("csv" | "json"). */
+function selectedMergeFormat() {
+  const checked = document.querySelector('input[name="mergeFormat"]:checked');
+  return checked && checked.value === "json" ? "json" : "csv";
+}
+
+/** Number of entries over all chosen (readable) files. */
+function mergeEntryCount() {
+  return mergeFiles.reduce((n, f) => n + f.rows.length, 0);
+}
+
+function openMergeDialog() {
+  mergeFiles = [];
+  merging = false;
+  els.mergeStatus.classList.add("hidden");
+  els.mergeStatus.textContent = "";
+  els.mergeCancelBtn.disabled = false;
+  els.mergeFileInput.value = "";
+  renderMergeFiles();
+  els.mergeModal.classList.remove("hidden");
+  els.mergePickBtn.focus();
+}
+
+function closeMergeDialog() {
+  els.mergeModal.classList.add("hidden");
+  mergeFiles = [];
+  merging = false;
+  renderMergeFiles();
+}
+
+/** Count column of one chosen file (entry count or the reason it is unusable). */
+function mergeFileCountText(file) {
+  if (file.error === "empty") return ts("history.mergeFileEmpty");
+  if (file.error) return ts("history.mergeFileUnreadable");
+  return ts("history.mergeFileCount", { count: file.rows.length });
+}
+
+/** Renders the chosen files: name, entry count and a remove button. */
+function renderMergeFiles() {
+  if (!els.mergeFileList) return;
+  els.mergeFileList.innerHTML = "";
+  mergeFiles.forEach((file, index) => {
+    const li = document.createElement("li");
+    li.className = "merge-file" + (file.error ? " error" : "");
+
+    const name = document.createElement("span");
+    name.className = "merge-file-name";
+    name.textContent = file.name;
+    name.title = file.name; // the name is ellipsized when it is too long
+
+    const count = document.createElement("span");
+    count.className = "merge-file-count";
+    count.textContent = mergeFileCountText(file);
+
+    li.append(name, count);
+    if (!merging) {
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "merge-file-remove";
+      remove.dataset.mergeRemove = String(index);
+      remove.title = ts("history.mergeFileRemove");
+      remove.setAttribute("aria-label", ts("history.mergeFileRemove"));
+      remove.textContent = "\u00d7";
+      li.append(remove);
+    }
+    els.mergeFileList.append(li);
+  });
+  els.mergeOkBtn.disabled = merging || mergeEntryCount() === 0;
+}
+
+/** Reads and parses the picked files and adds them to the merge list. */
+async function addMergeFiles(files) {
+  for (const file of files) {
+    const entry = { name: file.name || "", rows: [], error: null };
+    try {
+      entry.rows = WatcharrHistoryFileImport.parse(await file.text());
+      if (!entry.rows.length) entry.error = "empty";
+    } catch (err) {
+      entry.error = "unreadable";
+      dbg("merge: parsing failed for", file.name, "->", err.message);
+    }
+    mergeFiles.push(entry);
+  }
+  renderMergeFiles();
+}
+
+/**
+ * Merges the rows of the chosen files and serializes them into the file text of
+ * the chosen format. Returns { filename, text, mime, count, duplicates }.
+ */
+function buildMergedFile(files) {
+  const merged = WatcharrHistoryFileMerge.mergeRows(files.map((f) => f.rows));
+  const rows = WatcharrHistoryFileMerge.toExportRows(merged.rows);
+  if (!rows.length) throw new Error(ts("history.mergeNoEntries"));
+  const format = selectedMergeFormat();
+  const filename = WatcharrHistoryFileExport.filename(
+    WatcharrHistoryFileMerge.serviceSlug(merged.rows, "merged"),
+    format,
+  );
+  if (format === "json") {
+    return {
+      filename,
+      text: WatcharrHistoryFileExport.toJson(
+        rows,
+        // Metadata header of the merged file: which services it combines.
+        WatcharrHistoryFileMerge.serviceName(
+          merged.rows,
+          ts("history.mergeServiceName"),
+        ),
+      ),
+      mime: "application/json",
+      count: rows.length,
+      duplicates: merged.duplicates,
+    };
+  }
+  return {
+    filename,
+    // BOM so Excel detects UTF-8 (umlauts/accents in titles).
+    text: "\uFEFF" + rowsToCsv(rows),
+    mime: "text/csv;charset=utf-8",
+    count: rows.length,
+    duplicates: merged.duplicates,
+  };
+}
+
+/** Writes the merged file, downloads it and optionally loads it into the list. */
+async function runMerge() {
+  if (merging) return;
+  const files = mergeFiles.filter((f) => f.rows.length);
+  if (!files.length) return;
+  merging = true;
+  els.mergeOkBtn.disabled = true;
+  els.mergeCancelBtn.disabled = true;
+  els.mergeStatus.classList.remove("hidden");
+  els.mergeStatus.textContent = ts("history.mergeRunning");
+  renderMergeFiles(); // drops the remove buttons while the run is locked
+  let result = null;
+  try {
+    result = buildMergedFile(files);
+  } catch (err) {
+    els.mergeStatus.textContent = err.message || String(err);
+    setStatus("error", els.mergeStatus.textContent);
+  }
+  merging = false;
+  if (!result) {
+    els.mergeCancelBtn.disabled = false;
+    renderMergeFiles();
+    return;
+  }
+  const loadEntries = !!(els.mergeLoadList && els.mergeLoadList.checked);
+  closeMergeDialog();
+  downloadTextFile(result.filename, result.text, result.mime);
+  // Hand the merged text to the list like any other file import (matching and
+  // importing then work as usual); a failed load keeps its own error message.
+  const loaded = loadEntries
+    ? await applyLoadedFile({ text: result.text, name: result.filename })
+    : true;
+  if (loaded) {
+    showStatusPopup(
+      "success",
+      await t("history.mergeDone", {
+        count: result.count,
+        duplicates: result.duplicates,
+      }),
+    );
+  }
+}
+
+els.mergeBtn.addEventListener("click", () => {
+  closeMenus();
+  if (loadingInitial || exporting || importing) return; // one run at a time
+  openMergeDialog();
+});
+els.mergePickBtn.addEventListener("click", () => els.mergeFileInput.click());
+els.mergeFileInput.addEventListener("change", async () => {
+  const files = Array.from(els.mergeFileInput.files || []);
+  // Let the same file be picked again later (change would not fire).
+  els.mergeFileInput.value = "";
+  if (files.length) await addMergeFiles(files);
+});
+els.mergeFileList.addEventListener("click", (e) => {
+  const btn = e.target.closest("[data-merge-remove]");
+  if (!btn || merging) return;
+  mergeFiles.splice(Number(btn.dataset.mergeRemove), 1);
+  renderMergeFiles();
+});
+els.mergeOkBtn.addEventListener("click", runMerge);
+els.mergeCancelBtn.addEventListener("click", closeMergeDialog);
+// Click on the backdrop closes the dialog (not while the merge is running).
+els.mergeModal.addEventListener("click", (e) => {
+  if (e.target === els.mergeModal && !merging) closeMergeDialog();
 });
 
 els.reloadBtn.addEventListener("click", async () => {

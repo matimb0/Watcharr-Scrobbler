@@ -1060,6 +1060,82 @@ button:disabled {
   line-height: 1.5;
 }
 
+/* Merge dialog: file picker plus the list of already chosen files. */
+.merge-pick {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0 0 14px;
+}
+
+.merge-files {
+  list-style: none;
+  margin: 0 0 18px;
+  padding: 0;
+  max-height: 180px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+/* An empty list (nothing chosen yet) takes no space at all. */
+.merge-files:empty {
+  display: none;
+}
+
+.merge-file {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  font-size: 13px;
+}
+
+.merge-file + .merge-file {
+  border-top: 1px solid var(--border);
+}
+
+/* Long file names are cut off instead of widening the dialog. */
+.merge-file-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.merge-file-count {
+  color: var(--text-dim);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+/* Unreadable file / file without usable entries – the reason stands in the
+   count column, so the row is tinted. */
+.merge-file.error .merge-file-count {
+  color: var(--red);
+}
+
+.merge-file-remove {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-dim);
+  font-family: inherit;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.merge-file-remove:hover {
+  background: var(--bg-elev-2);
+  color: var(--text);
+}
+
 .modal-actions {
   display: flex;
   justify-content: flex-end;
