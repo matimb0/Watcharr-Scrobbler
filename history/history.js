@@ -463,11 +463,17 @@ function importBadge(it) {
  *   watched, but not this date-> teal   (only this watch date gets added)
  *   anything else             -> blue   (the watch gets added)
  *   nothing matched           -> red    (must be corrected by hand)
+ *   locked (no S/E)           -> yellow (must be corrected by hand first)
  */
 function rowBadge(it) {
   const imported = importBadge(it);
   if (imported) return imported;
   if (!it.match) return badge("problem", ts("history.badgeNoMatch"));
+  // The match is there, but the row is LOCKED because its season/episode are
+  // unknown (see isLocked/missingEpisode): the import would skip it
+  // (background/history/importer.js -> episode_missing), so "will be added"
+  // would promise something that does not happen.
+  if (missingEpisode(it)) return badge("warn", ts("history.badgeBlocked"));
   // Already watched, but this exact date is not recorded -> the import adds
   // the date instead of the watch itself.
   if (exactMatch && watchedButNotAtDate(it)) {
@@ -518,11 +524,7 @@ function matchWarnings(it) {
         "warn",
         ts("history.badgeNoEpisode"),
         ts("history.badgeNoEpisodeTitle", {
-          reason: ts(
-            it.providerNote === "episodeUnknown"
-              ? "history.noEpisodeReasonUnknown"
-              : "history.noEpisodeReasonNoMetadata",
-          ),
+          reason: missingEpisodeReason(it),
         }),
       ),
     );
@@ -553,15 +555,29 @@ function episodeDerived(it) {
   return !!(it.isTv && it.episodeDerived);
 }
 
-/** The service itself reported a series entry WITHOUT season/episode and the
- *  automatic derivation found none either, so the row can only be imported as
- *  the series – the user has to know that. */
+/**
+ * A series row with no season/episode at all: the source did not report them
+ * and the automatic derivation (see the matcher) found none either, so the row
+ * could only be imported as the series itself. Such a row is LOCKED until the
+ * numbers are assigned by hand – in EVERY source, not only in the one that also
+ * reports a reason for it (see missingEpisodeReason).
+ */
 function missingEpisode(it) {
-  return !!(
-    it.isTv &&
-    it.providerNote &&
-    it.season == null &&
-    it.episode == null
+  return !!(it.isTv && it.season == null && it.episode == null);
+}
+
+/** Why the season/episode are missing (the `{reason}` of the badge tooltip):
+ *  the source's own note when it has one – Netflix reports whether it had no
+ *  catalog data at all or no entry for this episode – otherwise the generic
+ *  text, which is the normal case for Prime Video, Jellyfin and imported
+ *  files. */
+function missingEpisodeReason(it) {
+  return ts(
+    it.providerNote === "episodeUnknown"
+      ? "history.noEpisodeReasonUnknown"
+      : it.providerNote === "noMetadata"
+        ? "history.noEpisodeReasonNoMetadata"
+        : "history.noEpisodeReasonNotReported",
   );
 }
 
@@ -571,8 +587,8 @@ function missingEpisode(it) {
  *
  *  - NO MATCH: there is no Watcharr/TMDB entry to write to at all
  *    (the importer skips it as `no_match`),
- *  - season/episode unknown (see missingEpisode): only the series itself would
- *    be created (`importEpisode` -> `episodes: 0`).
+ *  - season/episode unknown (see missingEpisode): the episode could not be
+ *    marked, so the importer would skip the row (`episode_missing`).
  *
  * Both stay locked until the user assigned what is missing through "Change
  * match" – the one action that always stays available on a locked row.
