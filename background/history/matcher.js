@@ -405,10 +405,10 @@
     const hint = item.tmdbHint;
     if (!hint || hint.tmdbId == null) return null;
 
-    // The user's "no match" decision also beats the file's TMDB id: it is an
-    // explicit instruction, and the button promises the entry stays unmatched
-    // (see rememberUnmatched). "Reset" removes the entry and the id applies
-    // again.
+    // The user's decisions beat the file's TMDB id: "no match" (see
+    // rememberUnmatched) keeps the row unmatched, and a match the user picked
+    // is the correction of what the file says – the next load must show it
+    // again instead of silently falling back to the file's id.
     const prior = await WatcharrMatchCache.lookupMatch(
       item.title,
       item.year,
@@ -420,7 +420,19 @@
         JSON.stringify(item.title),
         "-> deliberately left unmatched",
       );
-      return null;
+      // The sentinel, not `null`: "the user removed this match" is a different
+      // state than "the file's id was not found" – the caller labels the row
+      // accordingly (`unmatched` vs `tmdb_not_found`).
+      return WatcharrMatchCache.UNMATCHED;
+    }
+    if (prior && prior.manual) {
+      log(
+        "resolveMatchByTmdbId:",
+        JSON.stringify(item.title),
+        "-> user-picked TMDB",
+        prior.tmdbId,
+      );
+      return await fillWatchedState(prior);
     }
 
     // Try the file's TMDB title first, then the service's title.
@@ -751,7 +763,25 @@
    */
   async function deriveEpisode(item) {
     if (!item.isTv || !item.match || !item.episodeTitle) return false;
-    if (item.season != null && item.episode != null) return false;
+    if (item.season != null && item.episode != null) {
+      // The numbers are already known. A correction the USER made for this very
+      // episode name still wins over them: the source (an imported file, or a
+      // service that has no data left) reports its own numbers, and the user's
+      // "Change match" correction is the better data.
+      const decision = await WatcharrMatchCache.lookupEpisode(
+        item.match.tmdbId,
+        episodeProbeName(item),
+      );
+      if (!decision || !decision.manual) return false;
+      reportEpisode(item, decision, "manual");
+      log(
+        "deriveEpisode:",
+        JSON.stringify(item.title),
+        JSON.stringify(item.episodeTitle),
+        "(user's correction) -> S" + decision.season + "E" + decision.episode,
+      );
+      return true;
+    }
 
     // 1. the exact watch date
     if (await resolveEpisodeFromDate(item)) return true;
@@ -862,6 +892,10 @@
       item.year,
       item.isTv,
       item.match,
+      // The user decided: this entry stays binding for the title, even when the
+      // file/Service reports another year or an id of its own (see
+      // resolveMatchByTmdbId and match-cache.lookupMatch).
+      { manual: true },
     );
     if (item.isTv && item.season != null && item.episode != null) {
       // A row without a name has no key – storeEpisode ignores it then.
@@ -870,6 +904,9 @@
         episodeProbeName(item),
         item.season,
         item.episode,
+        // The user decided these numbers: they also beat the numbers a file or
+        // the service reports for this episode (see deriveEpisode).
+        { manual: true },
       );
     }
   }

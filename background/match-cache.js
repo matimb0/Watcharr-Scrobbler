@@ -173,6 +173,10 @@
    * a miss costs one request, a wrong match would cost the user an import into
    * the wrong entry.
    *
+   * A decision the USER made ("Change match", `manual`) is exempt from that
+   * guard: picking the 2024 remake for a 1989 row is exactly the correction the
+   * user can make, and it must not be thrown away by the next load.
+   *
    * The returned object is fresh apart from the identity: the Watcharr state
    * (`watchedId`, `watchedStatus`, `watchedCreatedAt`) is NOT part of the cache
    * (see the file header) and is filled by the caller.
@@ -185,10 +189,11 @@
     // A stored "no match" decision (see storeUnmatched) – not a miss.
     if (!entry.m) return UNMATCHED;
     if (!entry.m.tmdbId) return null;
+    const manual = !!entry.m.manual;
 
     const wantYear = Number(year) || null;
     const haveYear = Number(entry.m.year) || null;
-    if (wantYear && haveYear && wantYear !== haveYear) {
+    if (!manual && wantYear && haveYear && wantYear !== haveYear) {
       log(
         "matchCache:",
         JSON.stringify(title),
@@ -210,6 +215,10 @@
       posterPath: entry.m.posterPath || null,
       year: entry.m.year == null ? null : String(entry.m.year),
       ambiguous: !!entry.m.ambiguous,
+      // The user picked this entry by hand (see matcher.rememberDecision). A
+      // caller with an even more precise source of its own – the TMDB id of an
+      // imported file – still lets this decision win.
+      manual,
       watchedId: null,
       watchedStatus: null,
       watchedCreatedAt: null,
@@ -220,8 +229,11 @@
    * Stores (or replaces) the match of a provider title – called for an
    * automatically resolved match as well as for the result the user picked in
    * "Change match".
+   *
+   * `options.manual` marks a decision the USER made. It is kept in the entry so
+   * a later load recognises it as binding (see lookupMatch).
    */
-  async function storeMatch(title, year, isTv, match) {
+  async function storeMatch(title, year, isTv, match, options) {
     await load();
     const key = matchKey(title, isTv);
     const tmdbId = match && Number(match.tmdbId);
@@ -237,6 +249,8 @@
         // provider's year against.
         year: match.year == null ? null : String(match.year),
         ambiguous: !!match.ambiguous,
+        // A decision the user made (see lookupMatch: it is binding).
+        manual: !!(options && options.manual),
       },
     };
     evict();
@@ -280,7 +294,8 @@
    * ------------------------------------------------------------------ */
 
   /** Season/episode that was resolved for this episode NAME of this series, or
-   *  null (see matcher.deriveEpisode). */
+   *  null (see matcher.deriveEpisode). `manual` marks a decision the user made,
+   *  which is binding even when the source reported numbers of its own. */
   async function lookupEpisode(tmdbId, episodeTitle) {
     await load();
     const key = episodeKey(tmdbId, episodeTitle);
@@ -288,12 +303,13 @@
     if (!entry) return null;
     entry.at = Date.now();
     schedule();
-    return { season: entry.s, episode: entry.e };
+    return { season: entry.s, episode: entry.e, manual: !!entry.manual };
   }
 
   /** Stores the season/episode of one episode name (derived by TMDB or set by
-   *  the user). */
-  async function storeEpisode(tmdbId, episodeTitle, season, episode) {
+   *  the user). `options.manual` marks a decision the USER made – it is binding
+   *  (see deriveEpisode). */
+  async function storeEpisode(tmdbId, episodeTitle, season, episode, options) {
     await load();
     const key = episodeKey(tmdbId, episodeTitle);
     const s = Number(season);
@@ -308,9 +324,12 @@
     ) {
       return;
     }
+    const manual = !!(options && options.manual);
     const known = state.episodes[key];
-    if (known && known.s === s && known.e === e) return; // unchanged
-    state.episodes[key] = { at: Date.now(), s, e };
+    if (known && known.s === s && known.e === e && !!known.manual === manual) {
+      return; // unchanged
+    }
+    state.episodes[key] = { at: Date.now(), s, e, manual };
     evict();
     schedule();
     log(

@@ -341,11 +341,21 @@ const WatcharrHistory = (() => {
     try {
       if (item.tmdbHint) {
         // Imported file: the TMDB id is known, so match exactly this entry.
-        item.match = await matcher.resolveMatchByTmdbId(item);
-        item.matchError = item.match
-          ? null
-          : "TMDB ID " + item.tmdbHint.tmdbId + " not found in Watcharr";
-        item.matchErrorCode = item.match ? null : "tmdb_not_found";
+        const resolved = await matcher.resolveMatchByTmdbId(item);
+        // The user removed the match of this row ("Change match" -> no match):
+        // that decision survives the load (see matcher.resolveMatchByTmdbId), so
+        // the row must say "unmatched" instead of blaming the file's TMDB id.
+        if (resolved && resolved.unmatched) {
+          item.match = null;
+          item.matchError = "the match was removed by the user";
+          item.matchErrorCode = "unmatched";
+        } else {
+          item.match = resolved;
+          item.matchError = item.match
+            ? null
+            : "TMDB ID " + item.tmdbHint.tmdbId + " not found in Watcharr";
+          item.matchErrorCode = item.match ? null : "tmdb_not_found";
+        }
       } else {
         // Title/year match – the persistent cache first, only a miss searches
         // TMDB (see background/match-cache.js and matcher.matchTitle).
@@ -356,10 +366,14 @@ const WatcharrHistory = (() => {
       // Series: the service sometimes reports no season/episode (a delisted
       // title has no catalog data at all, e.g. on Netflix). Then the episode is
       // derived automatically, cheapest source first – see
-      // matcher.deriveEpisode (watch date, positional name, TMDB episode list
-      // in the reported language, TMDB names via Watcharr).
+      // matcher.deriveEpisode (the watch date, positional name, TMDB episode
+      // list in the reported language, TMDB names via Watcharr).
       if (item.match) {
-        if (await matcher.deriveEpisode(item)) item.episodeDerived = true;
+        // A correction the user made for this episode name counts as their
+        // decision, not as a derivation (see deriveEpisode -> "manual").
+        if (await matcher.deriveEpisode(item)) {
+          item.episodeDerived = item.episodeSource !== "manual";
+        }
       }
       // Series: is exactly THIS episode already watched in Watcharr?
       await matcher.resolveItemEpisodeStatus(item);
