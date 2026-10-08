@@ -217,7 +217,7 @@
     "matchReset": "Coincidencia manual de \"{title}\" restablecida; se vuelve a mostrar la asignación automática.",
     "matchCouldNotBeReset": "No se pudo restablecer la coincidencia.",
     "unmatch": "Sin coincidencia",
-    "unmatchTitle": "Quitar la coincidencia: la entrada queda sin asignar y no se vuelve a buscar.",
+    "unmatchTitle": "Quitar la coincidencia: solo esta entrada queda sin asignar y no se vuelve a buscar.",
     "unmatchedSet": "\"{title}\" marcado como sin coincidencia.",
     "matchCouldNotBeUnmatched": "No se pudo quitar la coincidencia.",
     "backgroundUnreachable": "El servicio en segundo plano no respondió. Vuelve a cargar la página e inténtalo de nuevo.",

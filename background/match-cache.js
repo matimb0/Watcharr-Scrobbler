@@ -10,6 +10,11 @@
  * What the cache may store:
  *  - `matches`:   provider title + medium -> the TMDB IDENTITY of the match
  *                 (tmdbId, contentType, name, posterPath, year, ambiguous).
+ *  - `unmatched`: provider title + medium -> the ROWS the user deliberately
+ *                 left unmatched ("Change match" -> no match). Scoped to the
+ *                 row (watch date + episode identity), because the episodes of
+ *                 a series are separate watches: a decision for one of them
+ *                 must not hit the others (see storeUnmatched).
  *  - `episodes`:  TMDB id + episode NAME -> the resolved season/episode. An
  *                 episode's number never changes, so the expensive name search
  *                 over TMDB's season pages runs once per name.
@@ -38,12 +43,15 @@
 
   const STORAGE_KEY = "matchCache";
   // Bumping this drops an incompatible stored blob instead of misreading it.
-  const VERSION = 1;
+  // v2 (version 2): a "no match" decision is stored per ROW (`unmatched`) – a v1
+  // blob kept it on the title, so it would still hit every row of that title
+  // (the episodes of a series, another play of a movie).
+  const VERSION = 2;
 
   /**
-   * Answer of `lookupMatch` for a title the user DELIBERATELY left unmatched
-   * ("Change match" -> no match): a stored decision, not a cache miss – the
-   * caller must not search TMDB again.
+   * Answer of `lookupMatch` for a title or row the user DELIBERATELY left
+   * unmatched ("Change match" -> no match): a stored decision, not a cache miss
+   * – the caller must not search TMDB again.
    */
   const UNMATCHED = { unmatched: true };
   // One budget for the whole cache – a stored TITLE and a stored EPISODE cost
@@ -55,7 +63,7 @@
   const FLUSH_DELAY_MS = 500;
 
   /** The live state; written back debounced. */
-  const state = { v: VERSION, matches: {}, episodes: {} };
+  const state = { v: VERSION, matches: {}, episodes: {}, unmatched: {} };
 
   let ready = null; // Promise of the one-time load
   let flushTimer = null; // pending debounced write
@@ -74,12 +82,15 @@
         if (!stored || stored.v !== VERSION) return; // nothing/old -> stay empty
         if (stored.matches) state.matches = stored.matches;
         if (stored.episodes) state.episodes = stored.episodes;
+        if (stored.unmatched) state.unmatched = stored.unmatched;
         log(
           "matchCache:",
           Object.keys(state.matches).length,
           "matches,",
           Object.keys(state.episodes).length,
-          "episodes loaded",
+          "episodes,",
+          Object.keys(state.unmatched).length,
+          "unmatched titles loaded",
         );
       } catch (err) {
         logErr("matchCache: could not be read ->", err.message);
@@ -132,6 +143,31 @@
   }
 
   /**
+   * Identity of ONE history row inside its title – the scope of a decision the
+   * user made for that row ("Change match" -> no match). Without it the
+   * decision would hit every row of the title: the episodes of a series are
+   * separate watches, and a movie can appear twice with two watch dates.
+   *
+   * Built ONLY from provider data (watch date, episode name, the season/episode
+   * numbers the service reported), because exactly those are reported again on
+   * the next load – a derived number may differ then.
+   *
+   * Empty when the row carries nothing that tells it apart from its siblings;
+   * the decision is title-wide in that case (see storeUnmatched).
+   */
+  function rowKey(row) {
+    if (!row) return "";
+    const parts = [
+      String(row.date || ""),
+      normName(row.episodeTitle),
+      row.season == null ? "" : String(row.season),
+      row.episode == null ? "" : String(row.episode),
+    ];
+    if (!parts.some((part) => !!part)) return "";
+    return parts.join("|");
+  }
+
+  /**
    * Keeps the cache inside its budget, dropping the least recently used entries.
    *
    * Deliberately ONE list over both kinds: an episode competes with a title for
@@ -140,7 +176,7 @@
    * fill up while the other stays half empty.
    */
   function evict() {
-    const kinds = [state.matches, state.episodes];
+    const kinds = [state.matches, state.episodes, state.unmatched];
     let excess = kinds.reduce(
       (sum, store) => sum + Object.keys(store).length,
       0,
@@ -168,8 +204,39 @@
    * ------------------------------------------------------------------ */
 
   /**
+   * Is exactly THIS row (see rowKey) stored as deliberately unmatched? `key` is
+   * the match key of the title; the state must be loaded already.
+   */
+  function rowDecision(key, row) {
+    const id = rowKey(row);
+    const entry = id && key ? state.unmatched[key] : null;
+    if (!entry || !entry.rows || !entry.rows[id]) return false;
+    entry.at = Date.now(); // keep the entry warm (LRU)
+    return true;
+  }
+
+  /**
+   * The row-scoped counterpart of `lookupMatch`'s decision: does the user's
+   * "no match" apply to this row? The file export asks it per row – a row that
+   * was removed stays without TMDB data there too (see
+   * background/history/exporter.js).
+   */
+  async function isRowUnmatched(title, isTv, row) {
+    await load();
+    const key = matchKey(title, isTv);
+    if (!key) return false;
+    if (rowDecision(key, row)) return true;
+    // A title-wide decision (a row that carried nothing to scope it by, see
+    // storeUnmatched) counts for every row of the title – the same answer
+    // `lookupMatch` gives.
+    const entry = state.matches[key];
+    return !!entry && !entry.m;
+  }
+
+  /**
    * Cached TMDB match of a provider title, `UNMATCHED` when the user decided
-   * that this title has no match at all, or null when nothing is stored.
+   * that this title (or, with `options.row`, exactly this ROW of it) has no
+   * match at all, or null when nothing is stored.
    *
    * The stored year guards against same-titled remakes ("Road House" 1989 vs
    * 2024): when the provider reports a year and the cached match is from a
@@ -185,12 +252,18 @@
    * (`watchedId`, `watchedStatus`, `watchedCreatedAt`) is NOT part of the cache
    * (see the file header) and is filled by the caller.
    */
-  async function lookupMatch(title, year, isTv) {
+  async function lookupMatch(title, year, isTv, options) {
     await load();
     const key = matchKey(title, isTv);
-    const entry = key && state.matches[key];
+    if (!key) return null;
+    // A decision for THIS row comes first: the row must not be answered with
+    // the match of its siblings (see storeUnmatched).
+    if (rowDecision(key, options && options.row)) return UNMATCHED;
+    const entry = state.matches[key];
     if (!entry) return null;
-    // A stored "no match" decision (see storeUnmatched) – not a miss.
+    // A stored "no match" decision for the WHOLE title – either the row carried
+    // nothing to scope it by, or this caller asks without a row at all (live
+    // scrobbling, see storeUnmatched) – not a miss.
     if (!entry.m) return UNMATCHED;
     if (!entry.m.tmdbId) return null;
     const manual = !!entry.m.manual;
@@ -236,12 +309,17 @@
    *
    * `options.manual` marks a decision the USER made. It is kept in the entry so
    * a later load recognises it as binding (see lookupMatch).
+   *
+   * `options.row` is the row this match belongs to (see rowKey): a "no match"
+   * decision for THAT row is thereby withdrawn – the row has a match again.
+   * The decisions of the other rows of the title stay untouched.
    */
   async function storeMatch(title, year, isTv, match, options) {
     await load();
     const key = matchKey(title, isTv);
     const tmdbId = match && Number(match.tmdbId);
     if (!key || !Number.isInteger(tmdbId) || tmdbId <= 0) return;
+    dropRowDecision(key, options && options.row);
     state.matches[key] = {
       at: Date.now(),
       m: {
@@ -262,27 +340,88 @@
     log("matchCache: stored", JSON.stringify(title), "->", tmdbId);
   }
 
+  /** Drops the stored "no match" decision of ONE row (no-op without one). */
+  function dropRowDecision(key, row) {
+    const id = rowKey(row);
+    const entry = id && key ? state.unmatched[key] : null;
+    if (!entry || !entry.rows || !entry.rows[id]) return;
+    delete entry.rows[id];
+    if (!Object.keys(entry.rows).length) delete state.unmatched[key];
+  }
+
   /**
-   * Stores the decision "this title is deliberately NOT matched" – the user's
-   * counterpart to a picked match. `lookupMatch` answers it with `UNMATCHED`
-   * instead of null, so the title is not searched and not auto-guessed again on
-   * the next load (see matcher.matchTitle).
+   * Stores the decision "this ROW is deliberately NOT matched" – the user's
+   * counterpart to a picked match ("Change match" -> no match). `lookupMatch`
+   * answers it with `UNMATCHED` instead of null, so the row is not searched and
+   * not auto-guessed again on the next load (see matcher.matchTitle).
+   *
+   * The decision belongs to the ROW (`row`, see rowKey), not to the title: the
+   * other episodes of the same series keep their match. Only a row that carries
+   * nothing to tell it apart is stored for the whole title – then every row of
+   * the title counts as removed (and so does what the live scrobbling resolves
+   * for it, which cannot name a row).
    */
-  async function storeUnmatched(title, isTv) {
+  async function storeUnmatched(title, isTv, row) {
     await load();
     const key = matchKey(title, isTv);
     if (!key) return;
-    state.matches[key] = { at: Date.now(), m: null };
+    const id = rowKey(row);
+    if (!id) {
+      state.matches[key] = { at: Date.now(), m: null };
+      delete state.unmatched[key]; // the title-wide decision replaces theirs
+      evict();
+      schedule();
+      log("matchCache: stored 'no match' for", JSON.stringify(title));
+      return;
+    }
+    const entry = state.unmatched[key] || { at: 0, rows: {} };
+    entry.rows = entry.rows || {};
+    entry.rows[id] = { at: Date.now() };
+    entry.at = Date.now();
+    state.unmatched[key] = entry;
     evict();
     schedule();
-    log("matchCache: stored 'no match' for", JSON.stringify(title));
+    log(
+      "matchCache: stored 'no match' for",
+      JSON.stringify(title),
+      "row",
+      JSON.stringify(id),
+    );
+  }
+
+  /**
+   * Drops stored "no match" decisions – those of ONE row when a row is given
+   * ("reset" and picking a match again, see storeMatch), all of the title
+   * otherwise. Without a row the title-wide decision (see storeUnmatched) is
+   * dropped as well, which is what `forgetMatch` does for the match entry.
+   */
+  async function forgetUnmatched(title, isTv, row) {
+    await load();
+    const key = matchKey(title, isTv);
+    if (!key) return;
+    const id = rowKey(row);
+    if (id) {
+      dropRowDecision(key, row);
+    } else {
+      delete state.unmatched[key];
+      if (state.matches[key] && !state.matches[key].m) {
+        delete state.matches[key];
+      }
+    }
+    schedule();
+    log(
+      "matchCache: forgot 'no match' for",
+      JSON.stringify(title),
+      id ? JSON.stringify(id) : "(all rows)",
+    );
   }
 
   /**
    * Drops the stored match of one provider title – used by "reset to
    * automatic", which wants the next resolution to search TMDB again instead
    * of answering with the (possibly user-picked) cached entry. Removing the
-   * entry also undoes a stored "no match" decision (see storeUnmatched).
+   * entry also undoes a title-wide "no match" decision (see storeUnmatched);
+   * the row-scoped ones are dropped by `forgetUnmatched`.
    */
   async function forgetMatch(title, isTv) {
     await load();
@@ -420,11 +559,13 @@
    * Maintenance
    * ------------------------------------------------------------------ */
 
-  /** Drops every cached match and episode (nothing else depends on them). */
+  /** Drops every cached match, episode and row decision (nothing else depends
+   *  on them). */
   async function clear() {
     await load();
     state.matches = {};
     state.episodes = {};
+    state.unmatched = {};
     if (flushTimer) {
       clearTimeout(flushTimer);
       flushTimer = null;
@@ -437,13 +578,19 @@
     }
   }
 
-  /** Number of cached entries (diagnostics/tests): titles and episodes, plus
-   *  their sum – `MAX_ENTRIES` applies to the sum. */
+  /** Number of cached entries (diagnostics/tests): titles, episodes and titles
+   *  with removed rows, plus their sum – `MAX_ENTRIES` applies to the sum. */
   async function size() {
     await load();
     const matches = Object.keys(state.matches).length;
     const episodes = Object.keys(state.episodes).length;
-    return { matches, episodes, total: matches + episodes };
+    const unmatched = Object.keys(state.unmatched).length;
+    return {
+      matches,
+      episodes,
+      unmatched,
+      total: matches + episodes + unmatched,
+    };
   }
 
   globalThis.WatcharrMatchCache = {
@@ -452,6 +599,8 @@
     storeMatch,
     storeUnmatched,
     forgetMatch,
+    forgetUnmatched,
+    isRowUnmatched,
     lookupEpisode,
     storeEpisode,
     forgetEpisode,

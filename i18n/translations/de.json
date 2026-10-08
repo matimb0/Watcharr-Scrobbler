@@ -217,7 +217,7 @@
     "matchReset": "Manuelle Zuordnung für \"{title}\" zurückgesetzt – es gilt wieder die automatische Zuordnung.",
     "matchCouldNotBeReset": "Zuordnung konnte nicht zurückgesetzt werden.",
     "unmatch": "Nicht zugeordnet",
-    "unmatchTitle": "Zuordnung entfernen: der Eintrag bleibt nicht zugeordnet und wird nicht erneut gesucht.",
+    "unmatchTitle": "Zuordnung entfernen: nur dieser Eintrag bleibt nicht zugeordnet und wird nicht erneut gesucht.",
     "unmatchedSet": "\"{title}\" als nicht zugeordnet markiert.",
     "matchCouldNotBeUnmatched": "Zuordnung konnte nicht entfernt werden.",
     "backgroundUnreachable": "Der Hintergrunddienst hat nicht geantwortet. Bitte lade die Seite neu und versuche es erneut.",

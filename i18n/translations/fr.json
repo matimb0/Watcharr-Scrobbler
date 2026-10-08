@@ -217,7 +217,7 @@
     "matchReset": "Correspondance manuelle de \"{title}\" réinitialisée – l'attribution automatique est de nouveau affichée.",
     "matchCouldNotBeReset": "La correspondance n'a pas pu être réinitialisée.",
     "unmatch": "Sans correspondance",
-    "unmatchTitle": "Retirer la correspondance : l'entrée reste sans attribution et n'est plus recherchée.",
+    "unmatchTitle": "Retirer la correspondance : seule cette entrée reste sans attribution et n'est plus recherchée.",
     "unmatchedSet": "\"{title}\" marqué comme sans correspondance.",
     "matchCouldNotBeUnmatched": "La correspondance n'a pas pu être retirée.",
     "backgroundUnreachable": "Le service d'arrière-plan n'a pas répondu. Rechargez la page et réessayez.",

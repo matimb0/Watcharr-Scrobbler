@@ -322,6 +322,24 @@
   }
 
   /**
+   * Provider-side identity of ONE history row, as the match cache needs it for
+   * a decision that belongs to this row alone (see rememberUnmatched):
+   * the watch date, the episode name and the season/episode numbers the SERVICE
+   * reported. Deliberately the provider's own values – `season`/`episode` may
+   * be derived and come out differently on the next load, which would move the
+   * row out from under its decision (see index.js -> providerSeason).
+   */
+  function rowInfo(item) {
+    if (!item) return null;
+    return {
+      date: item.date || "",
+      episodeTitle: item.episodeTitle || "",
+      season: item.providerSeason != null ? item.providerSeason : null,
+      episode: item.providerEpisode != null ? item.providerEpisode : null,
+    };
+  }
+
+  /**
    * TMDB match of a provider title – the entry point for the history rows and
    * the file export. The PERSISTENT cache comes first (background/match-cache.js):
    * a title that was matched once – automatically or by the user in "Change
@@ -330,19 +348,35 @@
    *
    * `options.fillWatched` (default true) adds the Watcharr list state. Callers
    * that only need the TMDB identity – the file export – skip it.
+   *
+   * `options.row` names the ROW this lookup is for (see rowInfo). A "no match"
+   * decision the user made for exactly that row then answers as UNMATCHED
+   * instead of falling back to the match of its siblings – the other rows of
+   * the same title keep it (see background/match-cache.js).
+   *
+   * `options.unmatchedSentinel` makes the stored "no match" decision come back
+   * as the UNMATCHED sentinel instead of `null`: a history ROW has to keep
+   * showing it as the user's decision after a reload, not as a failed search
+   * (see history/index.js -> resolveItem, like resolveMatchByTmdbId).
    */
   async function matchTitle(title, year, isTv, options) {
     const fillWatched = !options || options.fillWatched !== false;
-    const cached = await WatcharrMatchCache.lookupMatch(title, year, isTv);
-    // The user marked this title as "no match" ("Change match"): that decision
-    // counts, so no TMDB search may guess a match again.
+    const row = (options && options.row) || null;
+    const cached = await WatcharrMatchCache.lookupMatch(title, year, isTv, {
+      row,
+    });
+    // The user marked this row/title as "no match" ("Change match"): that
+    // decision counts, so no TMDB search may guess a match again.
     if (cached === WatcharrMatchCache.UNMATCHED) {
       log(
         "matchTitle:",
         JSON.stringify(title),
         "-> deliberately left unmatched",
+        row ? "(one row)" : "(title)",
       );
-      return null;
+      return options && options.unmatchedSentinel
+        ? WatcharrMatchCache.UNMATCHED
+        : null;
     }
     if (cached) {
       log(
@@ -355,7 +389,7 @@
     }
     const match = await searchTmdb(title, year, isTv);
     if (match) {
-      await WatcharrMatchCache.storeMatch(title, year, isTv, match);
+      await WatcharrMatchCache.storeMatch(title, year, isTv, match, { row });
       return fillWatched ? await fillWatchedState(match) : match;
     }
     return null;
@@ -413,6 +447,7 @@
       item.title,
       item.year,
       item.isTv,
+      { row: rowInfo(item) },
     );
     if (prior === WatcharrMatchCache.UNMATCHED) {
       log(
@@ -936,8 +971,9 @@
       item.match,
       // The user decided: this entry stays binding for the title, even when the
       // file/Service reports another year or an id of its own (see
-      // resolveMatchByTmdbId and match-cache.lookupMatch).
-      { manual: true },
+      // resolveMatchByTmdbId and match-cache.lookupMatch). The row is named as
+      // well, so its earlier "no match" decision is withdrawn (see storeMatch).
+      { manual: true, row: rowInfo(item) },
     );
     if (item.isTv && item.season != null && item.episode != null) {
       // A row without a name has no key – storeEpisode ignores it then.
@@ -956,10 +992,10 @@
 
   /**
    * Forgets the user's decision for this row ("reset" in "Change match"): the
-   * stored match of the title and the stored season/episode of its episode
-   * NAME are dropped, so the next resolution searches TMDB and derives the
-   * numbers again instead of answering from the cache
-   * (see background/match-cache.js).
+   * stored match of the title, a "no match" decision for the row and the stored
+   * season/episode of its episode NAME are dropped, so the next resolution
+   * searches TMDB and derives the numbers again instead of answering from the
+   * cache (see background/match-cache.js).
    *
    * The episode is keyed by the TMDB id of the match that is being forgotten,
    * so the id is read BEFORE the match is dropped.
@@ -968,6 +1004,12 @@
     if (!item) return;
     const tmdbId = item.match && item.match.tmdbId;
     await WatcharrMatchCache.forgetMatch(item.title, item.isTv);
+    // A row the user removed goes back to the automatic match as well.
+    await WatcharrMatchCache.forgetUnmatched(
+      item.title,
+      item.isTv,
+      rowInfo(item),
+    );
     if (item.isTv && tmdbId) {
       await WatcharrMatchCache.forgetEpisode(tmdbId, episodeProbeName(item));
     }
@@ -975,18 +1017,22 @@
 
   /**
    * Keeps the user's "no match" decision ("Change match" -> no match) in the
-   * persistent cache: the title is stored as DELIBERATELY unmatched, so the
-   * next load neither searches TMDB again nor shows a guessed match
-   * (see background/match-cache.js). An explicit "no match" supersedes the
-   * previous decision for this title, so that entry is dropped first.
+   * persistent cache: the ROW is stored as deliberately unmatched, so the next
+   * load neither searches TMDB again nor shows a guessed match for it
+   * (see background/match-cache.js). The other rows of the same title are NOT
+   * touched – the match of a series stays for its remaining episodes.
    *
-   * The episode cache is left alone: it is keyed by TMDB id + episode NAME and
-   * stays valid for the series, independent of whether this row is matched.
+   * The episode cache is left alone as well: it is keyed by TMDB id + episode
+   * NAME and stays valid for the series, independent of whether this row is
+   * matched.
    */
   async function rememberUnmatched(item) {
     if (!item) return;
-    await WatcharrMatchCache.forgetMatch(item.title, item.isTv);
-    await WatcharrMatchCache.storeUnmatched(item.title, item.isTv);
+    await WatcharrMatchCache.storeUnmatched(
+      item.title,
+      item.isTv,
+      rowInfo(item),
+    );
   }
 
   /**
@@ -1233,6 +1279,7 @@
     rememberDecision,
     forgetDecision,
     rememberUnmatched,
+    rowInfo,
     getEpisodeName,
     getWatchDates,
     clearCache,

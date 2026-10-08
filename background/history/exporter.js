@@ -16,22 +16,39 @@
   const CONCURRENCY = 4;
 
   const matcher = globalThis.WatcharrHistoryMatcher;
+  // Row-scoped "no match" decisions live here (see lookupRow).
+  const matchCache = globalThis.WatcharrMatchCache;
 
   /**
-   * TMDB match of one export row. `cache` holds one Promise per
-   * "title|year|type", so every episode of the same series shares a lookup and
-   * a long history only needs a handful of requests.
+   * TMDB match of one export row – or null when the user deliberately left
+   * EXACTLY THIS ROW unmatched ("Change match" -> no match, see
+   * background/match-cache.js). That decision belongs to the history row, so it
+   * is asked per row and BEFORE the shared cache below: a removed episode must
+   * not take the lookup of its siblings with it.
+   *
+   * Otherwise: `cache` holds one Promise per "title|year|type", so every episode
+   * of the same series shares a lookup and a long history only needs a handful
+   * of requests.
    *
    * The lookup goes through the matcher, which keeps the PERSISTENT cache
    * (background/match-cache.js) in front of TMDB: a title that was matched in
    * the history view before is answered without a request.
    */
-  function lookupRow(row, cache) {
+  async function lookupRow(row, cache) {
+    const isTv = row.type === "tv";
+    const unmatched = await matchCache.isRowUnmatched(row.title, isTv, {
+      date: row.watchedAt,
+      episodeTitle: row.episodeTitle,
+      season: row.season,
+      episode: row.episode,
+    });
+    if (unmatched) return null;
+
     const key = normTitle(row.title) + "|" + (row.year || "") + "|" + row.type;
     if (cache.has(key)) return cache.get(key);
 
     const pending = matcher
-      .matchTitle(row.title, row.year, row.type === "tv", {
+      .matchTitle(row.title, row.year, isTv, {
         // The export only wants the TMDB identity – the Watcharr list state is
         // not part of it and would cost a request per row.
         fillWatched: false,

@@ -217,7 +217,7 @@
     "matchReset": "Manual match for \"{title}\" reset – the automatic assignment is shown again.",
     "matchCouldNotBeReset": "Match could not be reset.",
     "unmatch": "No match",
-    "unmatchTitle": "Remove the match: this entry stays unmatched and is not searched again.",
+    "unmatchTitle": "Remove the match: only this entry stays unmatched and is not searched again.",
     "unmatchedSet": "\"{title}\" marked as unmatched.",
     "matchCouldNotBeUnmatched": "Match could not be removed.",
     "backgroundUnreachable": "The background service did not respond. Please reload the page and try again.",

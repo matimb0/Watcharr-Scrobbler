@@ -335,6 +335,18 @@ const WatcharrHistory = (() => {
       : MAX_HISTORY_PAGES;
   }
 
+  /**
+   * Writes the user's "no match" decision onto a row: no match, but kept apart
+   * from a FAILED search ("no_match"/"tmdb_not_found") so the page can name the
+   * decision it was instead of blaming the lookup
+   * (see history/history.js -> ERROR_KEYS.unmatched).
+   */
+  function applyUnmatched(item) {
+    item.match = null;
+    item.matchError = "the match was removed by the user";
+    item.matchErrorCode = "unmatched";
+  }
+
   /** Resolves one entry against Watcharr (TMDB search + episode status). */
   async function resolveItem(item) {
     if (item.resolved) return;
@@ -346,9 +358,7 @@ const WatcharrHistory = (() => {
         // that decision survives the load (see matcher.resolveMatchByTmdbId), so
         // the row must say "unmatched" instead of blaming the file's TMDB id.
         if (resolved && resolved.unmatched) {
-          item.match = null;
-          item.matchError = "the match was removed by the user";
-          item.matchErrorCode = "unmatched";
+          applyUnmatched(item);
         } else {
           item.match = resolved;
           item.matchError = item.match
@@ -358,10 +368,24 @@ const WatcharrHistory = (() => {
         }
       } else {
         // Title/year match – the persistent cache first, only a miss searches
-        // TMDB (see background/match-cache.js and matcher.matchTitle).
-        item.match = await matcher.matchTitle(item.title, item.year, item.isTv);
-        item.matchError = item.match ? null : "no match in Watcharr";
-        item.matchErrorCode = item.match ? null : "no_match";
+        // TMDB (see background/match-cache.js and matcher.matchTitle). The ROW
+        // is named as well, so a "no match" the user made for exactly this row
+        // stays that way (the other episodes of the series keep their match),
+        // and the sentinel keeps the same distinction the file branch above
+        // makes: a removed match is not shown as a search without a hit.
+        const resolved = await matcher.matchTitle(
+          item.title,
+          item.year,
+          item.isTv,
+          { row: matcher.rowInfo(item), unmatchedSentinel: true },
+        );
+        if (resolved && resolved.unmatched) {
+          applyUnmatched(item);
+        } else {
+          item.match = resolved;
+          item.matchError = item.match ? null : "no match in Watcharr";
+          item.matchErrorCode = item.match ? null : "no_match";
+        }
       }
       // Series: the service sometimes reports no season/episode (a delisted
       // title has no catalog data at all, e.g. on Netflix). Then the episode is
