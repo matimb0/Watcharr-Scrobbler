@@ -256,6 +256,7 @@
     "metadataSeries": "Série",
     "metadataPerson": "Personne",
     "metadataOn": "le {date}",
+    "serviceBadgeTitle": "Cette entrée provient de {service} (du fichier importé).",
     "noMatchFilter": "Aucune entrée pour le filtre \"{filter}\".",
     "error": {
       "generic": "Une erreur est survenue : {reason}",

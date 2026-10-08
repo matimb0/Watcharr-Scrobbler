@@ -325,6 +325,11 @@
       // side of the comparison like the service data.
       episodeTitle: isTv ? row.episodeTitle || null : null,
       tmdbHint: hint,
+      // Which service this row was exported from (our own export writes it). A
+      // merged file combines several services, so the row has to carry its own
+      // – the history page shows it when they differ (see history/history.js).
+      service: row.service || null,
+      serviceId: row.serviceId || null,
     };
   }
 

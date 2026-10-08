@@ -208,6 +208,17 @@ const WatcharrHistory = (() => {
    * Entries
    * ------------------------------------------------------------------ */
 
+  /** Id of the service the current list comes from. */
+  function currentServiceId() {
+    return serviceId;
+  }
+
+  /** Display name of the service the current list comes from. */
+  function currentServiceName() {
+    const svc = WatcharrServices.byId(serviceId);
+    return (svc && svc.name) || serviceId || null;
+  }
+
   /** Builds a list entry from a service view / file row (no grouping). */
   function entryToItem(entry) {
     const isTv = !!entry.isTv;
@@ -244,6 +255,16 @@ const WatcharrHistory = (() => {
       // Language the service reported this entry's title in – the episode name
       // is looked up in that language (see background/tmdb.js).
       providerLanguage: entry.providerLanguage || null,
+      // Which service this entry came from. For a service history that is the
+      // selected service, for an imported (possibly merged) FILE it is the one
+      // the row was exported from – the history page shows it per row when the
+      // loaded file mixes several services (see history/history.js). A file row
+      // WITHOUT that column keeps null: it is not the selected service, and
+      // naming one would put a wrong badge on it.
+      serviceName:
+        entry.service || (source === "file" ? null : currentServiceName()),
+      serviceId:
+        entry.serviceId || (source === "file" ? null : currentServiceId()),
       // true when season/episode had to be derived (not reported by the service)
       episodeDerived: false,
       // what the derivation used: "date" (exact watch date) or "name" (episode name)
@@ -286,6 +307,8 @@ const WatcharrHistory = (() => {
       providerId: item.providerId,
       providerType: item.providerType,
       providerNote: item.providerNote || null,
+      serviceName: item.serviceName || null,
+      serviceId: item.serviceId || null,
       episodeDerived: !!item.episodeDerived,
       episodeSource: item.episodeSource || null,
       match: item.match,
@@ -469,7 +492,27 @@ const WatcharrHistory = (() => {
       source,
       file: source === "file" ? fileName : "",
       fileTotal: source === "file" ? fileRows.length : 0,
+      // The services an imported file mixes (the history page then names the
+      // service on every row – see history/history.js). For a service history
+      // this stays empty; the whole list is that one service.
+      fileServices: source === "file" ? fileServiceList() : [],
     };
+  }
+
+  /**
+   * The distinct services the loaded FILE contains, in the order they appear.
+   * A merged file combines several exports, so the rows have to say where they
+   * come from; a file of one service needs no per-row service.
+   */
+  function fileServiceList() {
+    const seen = new Map();
+    for (const row of fileRows) {
+      const name = (row.service || "").trim() || (row.serviceId || "").trim();
+      if (!name) continue;
+      const id = (row.serviceId || "").trim();
+      if (!seen.has(name)) seen.set(name, { id, name });
+    }
+    return [...seen.values()];
   }
 
   /** Loads the next batch, resolves the matches and returns it. */

@@ -54,6 +54,7 @@
           source: data.source,
           file: data.file,
           fileTotal: data.fileTotal,
+          fileServices: data.fileServices || [],
         };
       }),
 

@@ -614,6 +614,49 @@ button:disabled {
   word-break: break-word;
 }
 
+/* Service of a row – only shown for an imported file that mixes several
+   services (see setFileServices): a small badge on its OWN line above the
+   title, colored per service so the rows of one service are recognizable at a
+   glance. The title is a text node of the same box and therefore starts on the
+   next line (an anonymous inline box after a block-level badge). */
+.service-badge {
+  display: block;
+  width: fit-content;
+  margin-bottom: 4px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+  background: color-mix(in srgb, currentColor 14%, transparent);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+/* Fallback for browsers without color-mix(). */
+@supports not (background: color-mix(in srgb, red 10%, transparent)) {
+  .service-badge {
+    background: var(--bg-elev-2);
+  }
+}
+
+.service-badge.s-netflix {
+  color: #ff5a63;
+}
+
+.service-badge.s-primevideo {
+  color: #4dc3ea;
+}
+
+.service-badge.s-jellyfin {
+  color: #c08bea;
+}
+
+.service-badge.s-other {
+  color: var(--text-dim);
+}
+
 .provider .meta {
   color: var(--text-dim);
   font-size: 12px;

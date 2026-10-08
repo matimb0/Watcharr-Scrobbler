@@ -249,6 +249,11 @@ let hideTransferred = false;
 // switching the order can re-send it to the background).
 let fileMode = false;
 let loadedFile = null; // { text, name }
+// The loaded file mixes several services (["Netflix", "Prime Video"] …) – then
+// every row names the service it came from, because it is not the same for all
+// of them (see serviceBadgeOf).
+let fileServices = [];
+let showRowServices = false;
 
 // Merge dialog: the files chosen so far with their parsed rows
 // ([{ name, rows, error }]) and the lock while the merged file is written.
@@ -670,6 +675,48 @@ function providerEpisodeLine(it) {
   return [label, it.episodeTitle].filter((p) => !!p).join(" · ");
 }
 
+/** Colors of the known services for the small service badge (see
+ *  serviceBadgeOf) – the extension's own accent per service, no brand artwork. */
+const SERVICE_COLORS = {
+  netflix: "#e50914",
+  primevideo: "#00a8e1",
+  jellyfin: "#aa5cc3",
+};
+
+/** CSS class suffix for the badge color: the known service id, or "other" for
+ *  anything else (a file written by another tool, or a service the extension
+ *  does not know). */
+function serviceColorClass(id) {
+  const key = String(id || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
+  // "prime video" (the displayed name) has to land on the registry id as well.
+  if (key === "primevideo" || key === "prime") return "primevideo";
+  return SERVICE_COLORS[key] ? key : "other";
+}
+
+/**
+ * Small badge naming the service of ONE row, or "" when it does not belong on
+ * the row: it is only shown for an imported file that mixes several services,
+ * because every row of a single-service list obviously comes from that service.
+ * The name is the file's own value (the registry's for a service history), so it
+ * stays readable for files written by other tools.
+ */
+function serviceBadgeOf(it) {
+  if (!showRowServices) return "";
+  const name = (it.serviceName || "").trim();
+  if (!name) return "";
+  return (
+    '<span class="service-badge s-' +
+    serviceColorClass(it.serviceId || name) +
+    '" title="' +
+    escapeHtml(ts("history.serviceBadgeTitle", { service: name })) +
+    '">' +
+    escapeHtml(name) +
+    "</span>"
+  );
+}
+
 /** The match had to be guessed (several same-titled entries, no year known).
  *  Shown on the Watcharr side as a hint to verify the match by hand. */
 function matchAmbiguous(it) {
@@ -735,6 +782,7 @@ function rowHtml(it) {
     " /></label>" +
     '<div class="provider">' +
     '<div class="name">' +
+    serviceBadgeOf(it) +
     escapeHtml(it.title) +
     "</div>" +
     (providerEp
@@ -827,10 +875,19 @@ function refreshScrollTriggers() {
  *  Watcharr name of the match – a row stays findable under both names. */
 function matchesFilter(it) {
   if (!filter) return true;
-  const provider = String(it.title || "").toLowerCase();
-  const matched =
-    it.match && it.match.name ? String(it.match.name).toLowerCase() : "";
-  return provider.includes(filter) || matched.includes(filter);
+  // The provider title (left side) and, when present, also the Watcharr name of
+  // the match – a row stays findable under both names. The service of the row is
+  // searchable as well: an imported file may mix several services, and "netflix"
+  // is then the only way to narrow the list down to one of them.
+  const values = [
+    it.title,
+    it.match && it.match.name,
+    it.serviceName,
+    it.serviceId,
+  ];
+  return values.some(
+    (value) => value && String(value).toLowerCase().includes(filter),
+  );
 }
 
 /** Does this row belong into the current view? The text filter and the
@@ -1091,6 +1148,23 @@ function setFileMode(on, name) {
   updateSourceUI();
 }
 
+/**
+ * Records which services the loaded file mixes. From two services on, every row
+ * names its own service – with only one (or with a service history) the whole
+ * list obviously is that service and a badge on every row would be noise.
+ */
+function setFileServices(list) {
+  fileServices = Array.isArray(list) ? list : [];
+  showRowServices = fileServices.length > 1;
+  dbg(
+    "file services:",
+    fileServices.map((s) => s.name),
+    {
+      showRowServices,
+    },
+  );
+}
+
 /** Shows/hides the file-mode controls (back button, export availability). */
 function updateSourceUI() {
   if (els.backGroup) {
@@ -1162,6 +1236,7 @@ async function backToService() {
   loadedFile = null;
   fileMode = false;
   fileName = "";
+  setFileServices([]); // a service history does not name a service per row
   closeOrderConfirm();
   updateSourceUI();
   await applyServiceHeader();
@@ -1241,6 +1316,7 @@ async function load() {
     // The background reports the source of the delivered list – this is the
     // single source of truth for file mode (a service load clears it).
     setFileMode(resp.source === "file", resp.file || "");
+    setFileServices(resp.source === "file" ? resp.fileServices : []);
     allItems = resp.items || [];
     total = resp.total != null ? resp.total : allItems.length;
     allLoaded = !!resp.done;
