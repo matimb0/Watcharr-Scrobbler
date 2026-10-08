@@ -13,6 +13,10 @@
  *  - `episodes`:  TMDB id + episode NAME -> the resolved season/episode. An
  *                 episode's number never changes, so the expensive name search
  *                 over TMDB's season pages runs once per name.
+ *                 A decision the user made for a CONCRETE watch is kept apart
+ *                 from that, under the watch date (`dates`): a source that does
+ *                 not report the season calls the first episode of every season
+ *                 "Folge 1", so the name alone cannot tell them apart.
  *
  * What it must NEVER store: everything that describes the USER's instance –
  * whether a title is on the list, with which status, which episodes are watched,
@@ -293,9 +297,22 @@
    * Episodes
    * ------------------------------------------------------------------ */
 
-  /** Season/episode that was resolved for this episode NAME of this series, or
-   *  null (see matcher.deriveEpisode). `manual` marks a decision the user made,
-   *  which is binding even when the source reported numbers of its own. */
+  /**
+   * Season/episode that was resolved for this episode NAME of this series, or
+   * null (see matcher.deriveEpisode).
+   *
+   * Two levels are returned, because one episode NAME can mean several episodes:
+   *
+   *  - `dates`: decisions for a CONCRETE watch (`iso` + numbers). A source that
+   *    does not report the season (Netflix for a delisted title, an imported
+   *    file without the column) calls the first episode of every season "Folge
+   *    1" – the name alone cannot tell them apart, the watch date can.
+   *  - the name-level numbers: what this NAME maps to in general (derived from
+   *    TMDB, or set by the user for a row without a date).
+   *
+   * `manual` marks a decision the user made, which is binding even when the
+   * source reported numbers of its own.
+   */
   async function lookupEpisode(tmdbId, episodeTitle) {
     await load();
     const key = episodeKey(tmdbId, episodeTitle);
@@ -303,12 +320,27 @@
     if (!entry) return null;
     entry.at = Date.now();
     schedule();
-    return { season: entry.s, episode: entry.e, manual: !!entry.manual };
+    return {
+      season: entry.s,
+      episode: entry.e,
+      manual: !!entry.manual,
+      dates: Object.entries(entry.dates || {}).map(([iso, value]) => ({
+        iso,
+        season: value.s,
+        episode: value.e,
+      })),
+    };
   }
 
-  /** Stores the season/episode of one episode name (derived by TMDB or set by
-   *  the user). `options.manual` marks a decision the USER made – it is binding
-   *  (see deriveEpisode). */
+  /**
+   * Stores the season/episode of one episode name.
+   *
+   * `options.date` stores it as the decision for THAT watch only (see
+   * lookupEpisode): that is what a user correction of a row means – "this
+   * viewing was S2E1", not "every 'Folge 1' of this series is S2E1".
+   * `options.manual` marks a decision the user made (it is binding and is kept
+   * apart from what was derived automatically).
+   */
   async function storeEpisode(tmdbId, episodeTitle, season, episode, options) {
     await load();
     const key = episodeKey(tmdbId, episodeTitle);
@@ -324,12 +356,41 @@
     ) {
       return;
     }
-    const manual = !!(options && options.manual);
-    const known = state.episodes[key];
-    if (known && known.s === s && known.e === e && !!known.manual === manual) {
-      return; // unchanged
+    const opts = options || {};
+    const manual = !!opts.manual;
+    const date = opts.date ? String(opts.date) : "";
+    const entry = state.episodes[key] || { at: 0 };
+
+    if (date) {
+      const known = entry.dates && entry.dates[date];
+      if (known && known.s === s && known.e === e) return; // unchanged
+      entry.dates = entry.dates || {};
+      entry.dates[date] = { at: Date.now(), s, e };
+      entry.at = Date.now();
+      state.episodes[key] = entry;
+      evict();
+      schedule();
+      log(
+        "matchCache: stored episode",
+        JSON.stringify(episodeTitle),
+        "of TMDB",
+        tmdbId,
+        "for",
+        date,
+        "-> S" + s + "E" + e,
+      );
+      return;
     }
-    state.episodes[key] = { at: Date.now(), s, e, manual };
+
+    if (entry.s === s && entry.e === e && !!entry.manual === manual) {
+      return; // unchanged (any dated decisions are kept)
+    }
+    state.episodes[key] = Object.assign(entry, {
+      at: Date.now(),
+      s,
+      e,
+      manual,
+    });
     evict();
     schedule();
     log(

@@ -740,6 +740,47 @@
   }
 
   /**
+   * The season/episode that is already known for ONE ROW, out of the cache
+   * (see match-cache.lookupEpisode) – or null.
+   *
+   * The watch DATE decides between the two levels: a decision stored for a
+   * concrete watch (`dates`) only applies to that watch (within the usual
+   * tolerance), and while such decisions exist they are the only ones that
+   * count – the name-level entry would belong to a different viewing. A source
+   * that omits the season calls every first episode "Folge 1", so falling back
+   * to the name there would assign the same episode to all of them (the reason
+   * this level exists).
+   */
+  async function cachedEpisodeForRow(item) {
+    if (!item || !item.match) return null;
+    const probe = episodeProbeName(item);
+    if (!probe) return null;
+    const entry = await WatcharrMatchCache.lookupEpisode(
+      item.match.tmdbId,
+      probe,
+    );
+    if (!entry) return null;
+
+    if (item.date && entry.dates.length) {
+      const closest = closestRecordedDate(
+        entry.dates.map((d) => d.iso),
+        item.date,
+      );
+      if (!closest) return null; // another watch of the same name
+      const hit = entry.dates.find((d) => d.iso === closest);
+      return hit
+        ? { season: hit.season, episode: hit.episode, manual: true }
+        : null;
+    }
+    if (entry.season == null || entry.episode == null) return null;
+    return {
+      season: entry.season,
+      episode: entry.episode,
+      manual: entry.manual,
+    };
+  }
+
+  /**
    * Derives the season/episode of a series row whose SERVICE reported none – the
    * whole automatic resolution, cheapest source first:
    *
@@ -764,14 +805,11 @@
   async function deriveEpisode(item) {
     if (!item.isTv || !item.match || !item.episodeTitle) return false;
     if (item.season != null && item.episode != null) {
-      // The numbers are already known. A correction the USER made for this very
-      // episode name still wins over them: the source (an imported file, or a
-      // service that has no data left) reports its own numbers, and the user's
-      // "Change match" correction is the better data.
-      const decision = await WatcharrMatchCache.lookupEpisode(
-        item.match.tmdbId,
-        episodeProbeName(item),
-      );
+      // The numbers are already known. A decision stored for THIS watch still
+      // wins over them: the source (an imported file, or a service that has no
+      // data left) reports numbers that may belong to another season when it
+      // does not name the season at all.
+      const decision = await cachedEpisodeForRow(item);
       if (!decision || !decision.manual) return false;
       reportEpisode(item, decision, "manual");
       log(
@@ -786,7 +824,29 @@
     // 1. the exact watch date
     if (await resolveEpisodeFromDate(item)) return true;
 
-    // 2. what the name means as a position
+    // 2. the PERSISTENT cache: this episode name was resolved for this series
+    //    before – for this very watch, or in general. Deliberately BEFORE the
+    //    season list below: a stored decision must also apply when the season
+    //    list cannot be fetched, and it costs no request at all.
+    const probe = episodeProbeName(item);
+    // A very short name is not a usable key ("Pilot" is fine, "1" is not).
+    const cacheable = normName(probe).length >= 3;
+    if (cacheable) {
+      const cached = await cachedEpisodeForRow(item);
+      if (cached) {
+        reportEpisode(item, cached, cached.manual ? "manual" : "name");
+        log(
+          "deriveEpisode:",
+          JSON.stringify(item.title),
+          JSON.stringify(item.episodeTitle),
+          cached.manual ? "(cached, this watch)" : "(cached)",
+          "-> S" + cached.season + "E" + cached.episode,
+        );
+        return true;
+      }
+    }
+
+    // 3. what the name means as a position
     const seasons = await getSeriesSeasons(item.match.tmdbId);
     if (!seasons.length) return false;
     const positional = positionalEpisode(item, seasons);
@@ -804,28 +864,10 @@
       return true;
     }
 
-    // 3. by NAME, over TMDB's episode lists. The PERSISTENT cache comes first:
-    //    this episode name was resolved for this series before (by TMDB or by
-    //    the user) and an episode's number never changes – the season pages are
-    //    then not fetched again.
-    const probe = episodeProbeName(item);
-    // A very short name is not a usable key ("Pilot" is fine, "1" is not).
-    if (normName(probe).length >= 3) {
-      const tmdbId = item.match.tmdbId;
-      const known = await WatcharrMatchCache.lookupEpisode(tmdbId, probe);
-      if (known) {
-        reportEpisode(item, known);
-        log(
-          "deriveEpisode:",
-          JSON.stringify(item.title),
-          JSON.stringify(item.episodeTitle),
-          "(cached) -> S" + known.season + "E" + known.episode,
-        );
-        return true;
-      }
-
+    if (cacheable) {
       // 4. the episode name in TMDB's episode list, in the language the
       //    service reported it in (season pages fetched in parallel).
+      const tmdbId = item.match.tmdbId;
       const seasonNumbers = seasonsToSearch(seasons);
       const languages = [];
       const addLanguage = async (value) => {
@@ -904,9 +946,10 @@
         episodeProbeName(item),
         item.season,
         item.episode,
-        // The user decided these numbers: they also beat the numbers a file or
-        // the service reports for this episode (see deriveEpisode).
-        { manual: true },
+        // The user's decision counts for THIS watch (see storeEpisode): a source
+        // that omits the season calls every first episode "Folge 1", so storing
+        // it for the name alone would assign it to all of them.
+        { manual: true, date: item.date },
       );
     }
   }
