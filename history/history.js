@@ -1549,7 +1549,14 @@ document.addEventListener("keydown", (e) => {
 
 // -- Selection / Filter ---------------------------------------------------------
 els.selectAllBtn.addEventListener("click", () => {
-  for (const it of allItems) it.selected = isSelectable(it);
+  // Only what is actually on screen: with a filter (or "hide already recorded")
+  // active, "Select all" means the displayed rows, so the button never selects
+  // something the user cannot see – the import count and the visible selection
+  // stay the same thing. Rows outside the current view lose a selection they
+  // still carried from before (otherwise they would be imported invisibly).
+  for (const it of allItems) {
+    it.selected = matchesView(it) && isSelectable(it);
+  }
   render();
 });
 els.selectNoneBtn.addEventListener("click", () => {
