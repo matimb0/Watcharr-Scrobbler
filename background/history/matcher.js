@@ -293,10 +293,23 @@
     const settings = await getSettings();
     if (!settings.watcharrUrl || !settings.token) return match;
     const client = new WatcharrClient(settings);
-    const watched = await client.getWatchedState(
+    const state = await client.getWatchedStateResult(
       match.tmdbId,
       match.contentType,
     );
+    // The lookup itself failed: the extension does NOT KNOW whether the title is
+    // on the list. Saying "not on the list" here (as `null` would) makes the row
+    // promise an import that then collides with the existing entry (Watcharr
+    // answers such a create with a 403), so the state is marked as unknown and
+    // the page says so (see history/history.js).
+    if (!state.ok) {
+      match.watchedStateUnknown = true;
+      return match;
+    }
+    // A successful read also withdraws an earlier "unknown" (e.g. after the
+    // user re-picked the match of a row whose state once failed).
+    match.watchedStateUnknown = false;
+    const watched = state.watched;
     if (watched && watched.id) {
       match.watchedId = watched.id;
       match.watchedStatus = watched.status || null;
@@ -448,7 +461,11 @@
       const hit = pickByTmdbId(results, hint.tmdbId);
       if (hit) {
         log("resolveMatchByTmdbId: TMDB", hint.tmdbId, "resolved via", query);
-        return resultToMatch(hit);
+        // The list state MUST be filled for exactly this id: the search only
+        // enriched its first few results (see enrichWithListState), and a title
+        // like "Naked" has the right entry further down the list – without this
+        // the row claims "will be added" although the entry is already there.
+        return await fillWatchedState(resultToMatch(hit));
       }
     }
     return null;
@@ -1127,6 +1144,7 @@
     pickExactTitle,
     pickByTmdbId,
     resultToMatch,
+    fillWatchedState,
     searchOnline,
     resolveMatchByTmdbId,
     resolveItemEpisodeStatus,

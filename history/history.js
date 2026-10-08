@@ -68,6 +68,7 @@ const ERROR_KEYS = {
   unmatched: "history.error.unmatched",
   episode_missing: "history.error.episodeMissing",
   create_failed: "history.error.createFailed",
+  watched_exists: "history.error.watchedExists",
   export_running: "history.error.exportRunning",
   history_busy: "history.error.historyBusy",
   file_unreadable: "history.error.fileUnreadable",
@@ -474,6 +475,16 @@ function rowBadge(it) {
   // (background/history/importer.js -> episode_missing), so "will be added"
   // would promise something that does not happen.
   if (missingEpisode(it)) return badge("warn", ts("history.badgeBlocked"));
+  // Watcharr could not be asked whether this title is on the list (see
+  // matcher.fillWatchedState): "will be added" would be a guess – the entry may
+  // well be there, only this row never got an answer.
+  if (it.match.watchedStateUnknown) {
+    return badge(
+      "warn",
+      ts("history.badgeStateUnknown"),
+      ts("history.badgeStateUnknownTitle"),
+    );
+  }
   // Already watched, but this exact date is not recorded -> the import adds
   // the date instead of the watch itself.
   if (exactMatch && watchedButNotAtDate(it)) {

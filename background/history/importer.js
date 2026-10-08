@@ -58,6 +58,39 @@
     return { status: "updated" };
   }
 
+  /** True when Watcharr refused a create because the entry is already there. */
+  function isAlreadyOnList(err) {
+    return !!(err && err.userCode === "watched_exists");
+  }
+
+  /**
+   * Takes over the Watcharr entry of this row after the create was refused with
+   * "already on the list" (or when the row's state was never readable, see
+   * matcher.fillWatchedState). Refreshes the row's Watcharr-side state – the
+   * watch date included, so `addMovieWatch` does not record a second play for a
+   * watch that is already there.
+   *
+   * Returns true when an entry was found and adopted.
+   */
+  async function adoptExistingEntry(client, item) {
+    const contentType = item.isTv ? "tv" : "movie";
+    const state = await client.getWatchedStateResult(
+      item.match.tmdbId,
+      contentType,
+    );
+    if (!state.watched || !state.watched.id) return false;
+    item.match.watchedId = state.watched.id;
+    item.match.watchedStatus = state.watched.status || null;
+    item.match.watchedCreatedAt = state.watched.createdAt || null;
+    item.match.watchedStateUnknown = false;
+    // Which watch dates Watcharr already holds for this entry – resolved the
+    // same way a fresh load does it (see matcher.resolveItemEpisodeStatus).
+    if (globalThis.WatcharrHistoryMatcher) {
+      await WatcharrHistoryMatcher.resolveItemEpisodeStatus(item);
+    }
+    return true;
+  }
+
   async function importMovie(client, item) {
     const { tmdbId, watchedId } = item.match;
 
@@ -83,6 +116,13 @@
       }
       return { status: "imported", watchedId: newId };
     } catch (err) {
+      // The movie IS on the list, only this row did not know it: the create was
+      // the wrong move, not a failure to report. Take the existing entry and
+      // write into it instead (its watch date, or nothing when this very watch
+      // is already recorded).
+      if (isAlreadyOnList(err) && (await adoptExistingEntry(client, item))) {
+        return addMovieWatch(client, item);
+      }
       return failure(err);
     }
   }
@@ -96,13 +136,11 @@
     // created earlier in this run already carries a watchedId.
     let seriesId = watchedId;
     if (!seriesId) {
-      try {
-        const show = await client.getWatchedShow(tmdbId);
-        const existing = show && show.watched && Number(show.watched.id);
-        if (existing) seriesId = existing;
-      } catch (_) {
-        /* check unavailable -> treat as new (a duplicate would be an error) */
-      }
+      const state = await client.getWatchedStateResult(tmdbId, "tv");
+      if (state.watched && state.watched.id) seriesId = state.watched.id;
+      // A failed lookup is NOT "does not exist": creating the series then
+      // collides with the existing entry (Watcharr answers 403) – the create
+      // below is healed for that case instead of reported as an error.
     }
 
     if (seriesId) {
@@ -155,6 +193,23 @@
         episodes: hasEpisode ? 1 : 0,
       };
     } catch (err) {
+      // The series IS on the list (see importMovie for the same case): use the
+      // entry that is there and mark the episode on it.
+      if (isAlreadyOnList(err) && (await adoptExistingEntry(client, item))) {
+        if (!hasEpisode) return { status: "updated", episodes: 0 };
+        try {
+          await client.addWatchedEpisode(
+            item.match.watchedId,
+            item.season,
+            item.episode,
+            "FINISHED",
+            watchedDate,
+          );
+          return { status: "updated", episodes: 1 };
+        } catch (inner) {
+          return failure(inner);
+        }
+      }
       return failure(err);
     }
   }

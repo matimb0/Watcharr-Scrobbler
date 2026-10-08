@@ -25,6 +25,28 @@ const clientError = WatcharrErrors.create;
 const contentCache = new Map(); // "tv|movie:id" -> { at, value }
 const CONTENT_CACHE_MS = 60000;
 
+/**
+ * Short-lived cache of the plain watchlist (`GET /watched`), keyed by
+ * instance+token. It is only read when a content page failed (see
+ * getWatchedStateResult), and a history load asks that question for many rows,
+ * so it must not be downloaded per row.
+ */
+const watchedListCache = new Map(); // "url|token" -> { at, value }
+const WATCHED_LIST_CACHE_MS = 60000;
+
+/**
+ * True when a Watcharr error message says the entry is already on the list.
+ *
+ * Watcharr reports this as a plain HTTP 403 with `{"error":"watched entry
+ * exists"}` (domain.ErrWatchedExists) – indistinguishable from any other
+ * service error by status alone, so the message has to be inspected.
+ */
+function isAlreadyOnListMessage(message) {
+  return /already (in|on the)? ?list|entry exists|already exists|already added/i.test(
+    String(message || ""),
+  );
+}
+
 class WatcharrClient {
   constructor(settings) {
     this.url = (settings.watcharrUrl || "").replace(/\/+$/, "");
@@ -57,7 +79,9 @@ class WatcharrClient {
       );
     }
 
-    if (resp.status === 401 || resp.status === 403) {
+    if (resp.status === 401) {
+      // The JWT was rejected (or a permission is missing – Watcharr's
+      // `PermRequired` answers 401 as well).
       const e = clientError(
         "auth_failed",
         "Authentication failed – please log in again.",
@@ -66,6 +90,11 @@ class WatcharrClient {
       throw e;
     }
     if (!resp.ok) {
+      // NOT 403 = auth: Watcharr uses 403 as its GENERIC error status for the
+      // watched routes (`POST /watched` when the entry already exists, any
+      // service error of an import/update – see feature/watched/router.go). So
+      // the body carries the actual reason and must be read instead of telling
+      // the user to log in again.
       let msg = "HTTP " + resp.status;
       try {
         const j = await resp.json();
@@ -73,7 +102,13 @@ class WatcharrClient {
       } catch (_) {
         /* no json body */
       }
-      throw clientError("watcharr_error", msg, { reason: msg });
+      throw clientError(
+        resp.status === 403 && isAlreadyOnListMessage(msg)
+          ? "watched_exists"
+          : "watcharr_error",
+        msg,
+        { status: resp.status, reason: msg },
+      );
     }
 
     if (resp.status === 204) return null;
@@ -261,7 +296,15 @@ class WatcharrClient {
     const value = this._request(
       "GET",
       "/content/" + type + "/" + Number(tmdbId),
-    );
+      // A FAILED lookup must not be cached: the promise would be handed out (and
+      // its rejection re-thrown) for the whole TTL, so one transient problem
+      // with this title would make the extension treat it as "not on the list"
+      // for the rest of the minute – and an import would then try to create an
+      // entry that already exists.
+    ).catch((err) => {
+      contentCache.delete(key);
+      throw err;
+    });
     contentCache.set(key, { at: Date.now(), value });
     return value;
   }
@@ -271,12 +314,96 @@ class WatcharrClient {
    * in what a TMDB search cannot know (see getContentItem).
    */
   async getWatchedState(tmdbId, contentType) {
+    const res = await this.getWatchedStateResult(tmdbId, contentType);
+    return res.watched;
+  }
+
+  /**
+   * Like `getWatchedState`, but says WHEN the question could not be answered.
+   *
+   * The difference matters: `null` means "this title is not on the list" and
+   * the history page promises to add it, while a failure means the extension
+   * simply does not know – reporting it as "not on the list" is what made an
+   * import create an entry that was already there (and Watcharr answers such a
+   * create with its generic 403, see _request).
+   *
+   * The content page is the primary source (it also carries the watched
+   * episodes), but it is NOT the only one: Watcharr builds it with TMDB plus a
+   * "similar titles" lookup and answers 500 when that fails, which has nothing
+   * to do with the user's list. The plain watchlist below answers the same
+   * question without any of that, so a broken content page no longer makes a
+   * watched title look unwatched.
+   */
+  async getWatchedStateResult(tmdbId, contentType) {
+    let contentError = null;
     try {
       const item = await this.getContentItem(tmdbId, contentType);
-      return (item && item.watched) || null;
-    } catch (_) {
-      return null;
+      return { ok: true, watched: (item && item.watched) || null };
+    } catch (err) {
+      contentError = err;
     }
+    try {
+      const entry = await this.findWatchedInList(tmdbId, contentType);
+      if (entry) {
+        WatcharrUtil.log(
+          "getWatchedStateResult: took",
+          contentType,
+          tmdbId,
+          "from the watchlist (content page failed)",
+        );
+        return {
+          ok: true,
+          watched: {
+            id: Number(entry.id) || null,
+            status: entry.status || null,
+            createdAt: entry.createdAt || null,
+          },
+        };
+      }
+      return { ok: true, watched: null };
+    } catch (listError) {
+      WatcharrUtil.logErr(
+        "getWatchedStateResult: could not read the state of",
+        contentType,
+        tmdbId,
+        "->",
+        contentError.message,
+        "/",
+        listError.message,
+      );
+      return { ok: false, watched: null };
+    }
+  }
+
+  /**
+   * The plain watchlist (`GET /watched`, the non-paginated route Watcharr keeps
+   * for "download the whole list"). Cached briefly, see watchedListCache.
+   */
+  getWatchedList() {
+    const key = this.url + "|" + this.token;
+    const hit = watchedListCache.get(key);
+    if (hit && Date.now() - hit.at < WATCHED_LIST_CACHE_MS) return hit.value;
+    const value = this._request("GET", "/watched").catch((err) => {
+      watchedListCache.delete(key);
+      throw err;
+    });
+    watchedListCache.set(key, { at: Date.now(), value });
+    return value;
+  }
+
+  /** The watchlist entry of one title (see getWatchedList), or null. */
+  async findWatchedInList(tmdbId, contentType) {
+    const type = contentType === "movie" ? "movie" : "tv";
+    const id = Number(tmdbId);
+    const list = await this.getWatchedList();
+    for (const entry of Array.isArray(list) ? list : []) {
+      const content = entry && entry.content;
+      if (!content) continue;
+      if (Number(content.tmdbId) === id && String(content.type) === type) {
+        return entry;
+      }
+    }
+    return null;
   }
 
   /**
@@ -300,6 +427,9 @@ function clearContentCache(tmdbIds) {
     const id = Number(key.split(":")[1]);
     if (!wanted.size || wanted.has(id)) contentCache.delete(key);
   }
+  // The watchlist entries carry the status/date an import just changed, so it
+  // must not be served stale either.
+  watchedListCache.clear();
 }
 
 /**

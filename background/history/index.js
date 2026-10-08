@@ -591,6 +591,11 @@ const WatcharrHistory = (() => {
     // A search result replaces the match; without one the match is kept.
     if (result && result.ids) {
       item.match = matcher.resultToMatch(result);
+      // The state of the picked match must be read from Watcharr: a search
+      // result only carries it when it was among the first few enriched ones
+      // (see matcher.enrichWithListState), so without this the row of a title
+      // that IS on the list would still promise "will be added".
+      if (item.match) await matcher.fillWatchedState(item.match);
       item.matchError = item.match ? null : "no match";
       item.matchErrorCode = item.match ? null : "no_match";
     }
