@@ -1889,39 +1889,69 @@ function importSummary(results) {
   return parts.length ? parts.join(" · ") : ts("history.nothingToDo");
 }
 
+/** One row of an import request. The import must not depend on the row keys of
+ *  the background's current list (another history page replaces that list, and
+ *  after a restart its row numbering starts at 0 again – the same key would then
+ *  address a different row), so the page sends what the row IS: provider data
+ *  plus the Watcharr state it was matched with, and its own key only to get the
+ *  result back. */
+function importRow(it) {
+  const watchedId = it.match ? Number(it.match.watchedId) : NaN;
+  return {
+    key: it.key,
+    isTv: !!it.isTv,
+    title: it.title,
+    year: it.year || null,
+    date: it.date || null,
+    season: it.season == null ? null : it.season,
+    episode: it.episode == null ? null : it.episode,
+    watchDateMatched: !!it.watchDateMatched,
+    match: it.match
+      ? {
+          tmdbId: it.match.tmdbId,
+          // `true` is the page's own marker for "is on the list" (see the result
+          // handling below) – never send it as an id.
+          watchedId:
+            Number.isFinite(watchedId) && watchedId > 0 ? watchedId : null,
+          watchedStatus: it.match.watchedStatus || null,
+          watchedCreatedAt: it.match.watchedCreatedAt || null,
+          watchedStateUnknown: !!it.match.watchedStateUnknown,
+        }
+      : null,
+  };
+}
+
 // -- Import -------------------------------------------------------------------
 els.importBtn.addEventListener("click", async () => {
-  const keys = allItems.filter((it) => it.selected).map((it) => it.key);
-  if (!keys.length || importing) return;
+  // Exactly the rows the button counts (see updateImportButton): a locked row
+  // must not be sent, so the run and the "(count)" label always agree.
+  const sentRows = allItems.filter((it) => it.selected && isSelectable(it));
+  if (!sentRows.length || importing) return;
   setImporting(true);
-  setStatus("info", await t("history.importingTitles", { count: keys.length }));
-  // Set when the background answered for fewer rows than it was asked about –
-  // the page then shows a list the background no longer has (see
-  // refreshStaleList); the refresh runs after the lock is released.
-  let staleList = false;
+  setStatus(
+    "info",
+    await t("history.importingTitles", { count: sentRows.length }),
+  );
+  let result = null; // { kind, key } for the final status popup
   try {
     const resp = await sendHistoryMessage({
       type: "watcharr:history:import",
-      keys,
+      rows: sentRows.map(importRow),
     });
     if (!resp || !resp.ok)
       throw new Error(await describeError(resp, "history.loadingFailed"));
     const results = resp.results || [];
-    // The background answers with exactly one result per row it knows, so
-    // fewer results than keys means unknown rows – without this check the run
-    // would report "nothing to do" for rows that were never sent.
-    staleList = results.length < keys.length;
     const byKey = {};
     for (const r of results) byKey[r.key] = r;
-    for (const it of allItems) {
-      if (byKey[it.key]) {
-        it.status = byKey[it.key].status;
-        it.error = byKey[it.key].error || null;
-        it.errorCode = byKey[it.key].code || null;
-        if (it.status === "imported" || it.status === "updated") {
-          it.selected = false;
-          if (it.match) it.match.watchedId = byKey[it.key].watchedId || true;
-        }
+    for (const it of sentRows) {
+      const r = byKey[it.key];
+      if (!r) continue;
+      it.status = r.status;
+      it.error = r.error || null;
+      it.errorCode = r.code || null;
+      if (it.status === "imported" || it.status === "updated") {
+        it.selected = false;
+        if (it.match) it.match.watchedId = r.watchedId || it.match.watchedId;
       }
     }
     render();
@@ -1929,28 +1959,37 @@ els.importBtn.addEventListener("click", async () => {
       (r) => r.status === "imported" || r.status === "updated",
     ).length;
     const errCount = results.filter((r) => r.status === "error").length;
-    if (okCount > 0) {
-      showStatusPopup(
-        "success",
-        await t("history.importCompleted", { summary: importSummary(results) }),
-      );
-    } else if (errCount > 0) {
-      showStatusPopup(
-        "error",
-        await t("history.importFailed", { summary: importSummary(results) }),
-      );
-    } else {
-      showStatusPopup(
-        "info",
-        await t("history.importCompleted", { summary: importSummary(results) }),
-      );
-    }
+    dbg(
+      "import:",
+      results.length,
+      "of",
+      sentRows.length,
+      "rows answered,",
+      okCount,
+      "written,",
+      errCount,
+      "failed",
+    );
+    result = {
+      kind: okCount > 0 ? "success" : errCount > 0 ? "error" : "info",
+      key:
+        errCount > 0 && okCount === 0
+          ? "history.importFailed"
+          : "history.importCompleted",
+      params: { summary: importSummary(results) },
+    };
   } catch (err) {
-    setStatus("error", err.message);
+    // Always report through the popup: it sits above the fixed toolbar and is
+    // visible no matter where the list is scrolled to, while the status bar at
+    // the top of the page is not – an error that only lands there looked like
+    // "the button did nothing".
+    dbg("import failed:", err.message);
+    result = { kind: "error", text: err.message };
   } finally {
     setImporting(false);
   }
-  if (staleList) await refreshStaleList();
+  if (result.text) showStatusPopup("error", result.text);
+  else showStatusPopup(result.kind, await t(result.key, result.params));
 });
 
 // -- Export of the complete history into a file -------------------------------

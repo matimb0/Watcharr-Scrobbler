@@ -8,7 +8,7 @@
 "use strict";
 
 (function () {
-  const { subtractMinutes } = globalThis.WatcharrUtil;
+  const { subtractMinutes, log, logErr } = globalThis.WatcharrUtil;
   const userError = WatcharrErrors.create;
 
   /** Result object for a failed step. */
@@ -21,18 +21,71 @@
   }
 
   /**
+   * Drops the extension's cached Watcharr state of the title this row belongs to.
+   *
+   * Used twice: BEFORE a "the entry is already there" re-read (the create was
+   * refused, so the state this row was matched with is outdated – the caches of
+   * the matching phase must not answer that question again) and AFTER a write
+   * (the next row or the next "Import selected" must not read the state from
+   * before it). Both are the same cause: the content page and the watchlist are
+   * cached for a minute, the matcher's episode/show caches until the next
+   * reload, so an import a moment later fails – the entry is created a second
+   * time (Watcharr answers 403) and the watch date is never written.
+   */
+  function forgetTitleState(item) {
+    if (!item || !item.match) return;
+    const tmdbId = Number(item.match.tmdbId);
+    if (Number.isFinite(tmdbId) && globalThis.WatcharrClientCache) {
+      globalThis.WatcharrClientCache.clearContentCache([tmdbId]);
+    }
+    const matcher = globalThis.WatcharrHistoryMatcher;
+    if (matcher && typeof matcher.forgetWatcharrState === "function") {
+      matcher.forgetWatcharrState(tmdbId);
+    }
+  }
+
+  /** True when this result wrote something to Watcharr (or tried to write into
+   *  an entry that is already there – both mean the cached state is outdated). */
+  function changedWatcharrState(result) {
+    return (
+      result.status === "imported" ||
+      result.status === "updated" ||
+      result.code === "watched_exists"
+    );
+  }
+
+  /**
    * Records a watch of a MOVIE that is already on the list.
    *
    * Watcharr keeps ONE entry per movie, so every further watch of it is an
    * activity ("play"). Its API has no request that adds a dated play, so this
    * does what Watcharr's own UI does: a status change adds the activity, and the
    * date the service reported is then stored on it.
+   *
+   * A status change is therefore REQUIRED – and for an entry that is already
+   * FINISHED that means changing it away and back, because Watcharr only creates
+   * the play when the status really changes (see UpdateWatched). Without that
+   * step the watch date of a rewatch was never written: the row stayed "date
+   * will be added" in the list forever. The intermediate change is removed
+   * again, so exactly one dated play of this row remains.
    */
   async function addMovieWatch(client, item) {
     const { watchedId, watchedStatus } = item.match;
     // The date of this very watch is already recorded -> nothing to add.
     if (watchedStatus === "FINISHED" && item.watchDateMatched) {
       return { status: "updated" };
+    }
+
+    let intermediateActivity = null;
+    if (watchedStatus === "FINISHED") {
+      try {
+        const resp = await client.updateWatched(watchedId, {
+          status: "WATCHING",
+        });
+        intermediateActivity = resp && resp.newActivity;
+      } catch (err) {
+        return failure(err);
+      }
     }
 
     let newActivity = null;
@@ -47,14 +100,29 @@
 
     // Without a date there is nothing to correct (the activity counts as a
     // play, dated now).
-    if (!item.date || !newActivity || !newActivity.id) {
-      return { status: "updated" };
+    if (item.date && newActivity && newActivity.id) {
+      try {
+        await client.updateActivityDate(newActivity.id, item.date);
+      } catch (err) {
+        return failure(err);
+      }
     }
-    try {
-      await client.updateActivityDate(newActivity.id, item.date);
-    } catch (err) {
-      return failure(err);
+
+    // The status change only existed to make Watcharr create the play.
+    if (intermediateActivity && intermediateActivity.id) {
+      try {
+        await client.deleteActivity(intermediateActivity.id);
+      } catch (err) {
+        logErr(
+          "addMovieWatch: could not remove the intermediate status activity",
+          intermediateActivity.id,
+          "->",
+          err.message,
+        );
+      }
     }
+
+    item.match.watchedStatus = "FINISHED";
     return { status: "updated" };
   }
 
@@ -74,6 +142,12 @@
    */
   async function adoptExistingEntry(client, item) {
     const contentType = item.isTv ? "tv" : "movie";
+    // Watcharr refused the create because the entry IS there – so the state this
+    // row was matched with is outdated. Drop it before looking again: the read
+    // below would otherwise be answered from the caches of the matching phase
+    // (content page/watchlist: one minute) and report "not on the list" a second
+    // time, which makes the import fail on a title a first import just created.
+    forgetTitleState(item);
     const state = await client.getWatchedStateResult(
       item.match.tmdbId,
       contentType,
@@ -127,9 +201,53 @@
     }
   }
 
+  /**
+   * Marks the episode and stores the reported watch date on the activity
+   * Watcharr created for it.
+   *
+   * An episode's watch date belongs on its activity, and the episode request
+   * has NO date field (domain.WatchedEpisodeSetRequest.AddActivityDate is
+   * `json:"-"`), so the date has to be written afterwards – otherwise the
+   * episode is recorded without its date and the row is offered for import
+   * again and again without anything changing.
+   */
+  async function writeEpisode(client, seriesId, item) {
+    const watchedDate = item.date || null;
+    let resp;
+    try {
+      resp = await client.addWatchedEpisode(
+        seriesId,
+        item.season,
+        item.episode,
+        "FINISHED",
+        watchedDate,
+      );
+    } catch (err) {
+      return failure(err);
+    }
+
+    const activity = resp && resp.newActivity;
+    // Nothing new was created (this very episode is already FINISHED in this
+    // state) -> the watch itself is recorded, which is what the row asked for.
+    if (!watchedDate || !activity || !activity.id) {
+      return { status: "updated", episodes: 1 };
+    }
+    try {
+      await client.updateActivityDate(activity.id, watchedDate);
+    } catch (err) {
+      return {
+        status: "error",
+        error:
+          "The episode was marked as watched, but its watch date could not be stored: " +
+          err.message,
+        code: (err && err.userCode) || null,
+      };
+    }
+    return { status: "updated", episodes: 1 };
+  }
+
   async function importEpisode(client, item) {
     const { tmdbId, watchedId } = item.match;
-    const watchedDate = item.date || null;
     const hasEpisode = item.season != null && item.episode != null;
 
     // Does the series already exist in Watcharr? A matched row or a series
@@ -145,18 +263,7 @@
 
     if (seriesId) {
       if (!hasEpisode) return { status: "updated", episodes: 0 };
-      try {
-        await client.addWatchedEpisode(
-          seriesId,
-          item.season,
-          item.episode,
-          "FINISHED",
-          watchedDate,
-        );
-        return { status: "updated", episodes: 1 };
-      } catch (err) {
-        return failure(err);
-      }
+      return writeEpisode(client, seriesId, item);
     }
 
     // The series does not exist yet:
@@ -168,7 +275,7 @@
         tmdbId,
         "tv",
         "WATCHING",
-        subtractMinutes(watchedDate, 1),
+        subtractMinutes(item.date || null, 1),
       );
       const newId = created && Number(created.id);
       if (!newId) {
@@ -179,13 +286,10 @@
         };
       }
       if (hasEpisode) {
-        await client.addWatchedEpisode(
-          newId,
-          item.season,
-          item.episode,
-          "FINISHED",
-          watchedDate,
-        );
+        const written = await writeEpisode(client, newId, item);
+        // The episode itself failed (its date could not be stored) -> report
+        // that instead of claiming the whole row was imported.
+        if (written.status === "error") return written;
       }
       return {
         status: "imported",
@@ -197,18 +301,7 @@
       // entry that is there and mark the episode on it.
       if (isAlreadyOnList(err) && (await adoptExistingEntry(client, item))) {
         if (!hasEpisode) return { status: "updated", episodes: 0 };
-        try {
-          await client.addWatchedEpisode(
-            item.match.watchedId,
-            item.season,
-            item.episode,
-            "FINISHED",
-            watchedDate,
-          );
-          return { status: "updated", episodes: 1 };
-        } catch (inner) {
-          return failure(inner);
-        }
+        return writeEpisode(client, item.match.watchedId, item);
       }
       return failure(err);
     }
@@ -271,10 +364,29 @@
         item.match.watchedId = created.get(key);
       }
 
-      const result = await importOne(client, item);
+      // One row may never abort the run: an unexpected error (a shape the row
+      // did not have, a Watcharr answer nobody mapped) belongs to THIS row and
+      // is reported on it – the other selected rows are still imported.
+      let result;
+      try {
+        result = await importOne(client, item);
+      } catch (err) {
+        logErr(
+          "importItems: unexpected error for",
+          item.title,
+          "->",
+          err && err.message,
+        );
+        result = failure(err);
+      }
       item.status = result.status;
       item.error = result.error || null;
       item.errorCode = result.code || null;
+
+      // The write changed the Watcharr state of this title – the caches must not
+      // outlive it (see forgetTitleState), or the next row/import reads the
+      // state from before.
+      if (changedWatcharrState(result)) forgetTitleState(item);
 
       if (result.watchedId && item.match) {
         item.match.watchedId = result.watchedId;

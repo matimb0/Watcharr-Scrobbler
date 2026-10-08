@@ -47,6 +47,23 @@ function isAlreadyOnListMessage(message) {
   );
 }
 
+/**
+ * Normalizes the activity list of a write response to `newActivity` (the first
+ * activity this call created). Watcharr's writes answer with
+ * `{ newActivities: [...] }` (PUT /watched/:id) or
+ * `{ addedActivities: [...] }` (POST /watched/episode), while single-activity
+ * routes use `newActivity`. A missing field must stay "nothing was created".
+ */
+function normalizeActivityResponse(resp, field) {
+  if (!resp || typeof resp !== "object") return resp;
+  if (resp.newActivity) return resp;
+  const list = resp[field || "newActivities"] || resp.newActivities;
+  if (Array.isArray(list)) {
+    return Object.assign({}, resp, { newActivity: list[0] || null });
+  }
+  return resp;
+}
+
 class WatcharrClient {
   constructor(settings) {
     this.url = (settings.watcharrUrl || "").replace(/\/+$/, "");
@@ -217,9 +234,19 @@ class WatcharrClient {
     return this._request("POST", "/watched", body);
   }
 
-  /** Update a watched entry (status, rating, thoughts, pinned). */
-  updateWatched(id, patch) {
-    return this._request("PUT", "/watched/" + Number(id), patch);
+  /**
+   * Update a watched entry (status, rating, thoughts, pinned).
+   *
+   * Watcharr answers with `newActivities` – an ARRAY of the activities this
+   * change created (domain.WatchedUpdateResponse), while other routes use the
+   * singular `newActivity` (delete). Both shapes are normalized here, so callers
+   * always see the activity of this change as `newActivity`: it is the only
+   * place a watch date can be stored (see updateActivityDate), and reading the
+   * wrong field is what silently dropped it.
+   */
+  async updateWatched(id, patch) {
+    const resp = await this._request("PUT", "/watched/" + Number(id), patch);
+    return normalizeActivityResponse(resp);
   }
 
   /**
@@ -237,8 +264,28 @@ class WatcharrClient {
     });
   }
 
-  /** Mark a specific episode as watched (auto-updates the show status). */
-  addWatchedEpisode(
+  /**
+   * Removes one activity. Used to take back the status change that a movie
+   * rewatch needs in order to make Watcharr create a play at all (see the
+   * importer): only the play with the watch date is meant to stay.
+   */
+  deleteActivity(id) {
+    return this._request("DELETE", "/activity/" + Number(id));
+  }
+
+  /**
+   * Mark a specific episode as watched (auto-updates the show status).
+   *
+   * The response carries the activities this call created (`addedActivities`,
+   * which is where a watch date belongs for an episode – the request itself has
+   * no date field, see domain.WatchedEpisodeSetRequest) and it normalizes them
+   * to `newActivity` like updateWatched does.
+   *
+   * `watchedDate` is still sent: versions of Watcharr that accept it store the
+   * date directly, and for the current ones the importer stores it on the
+   * returned activity.
+   */
+  async addWatchedEpisode(
     watchedId,
     seasonNumber,
     episodeNumber,
@@ -254,7 +301,8 @@ class WatcharrClient {
     // RFC3339 watch date – the request struct expects the JSON field
     // `watchedDate` (entity: WatchedEpisodeAddRequest).
     if (watchedDate) body.watchedDate = watchedDate;
-    return this._request("POST", "/watched/episode", body);
+    const resp = await this._request("POST", "/watched/episode", body);
+    return normalizeActivityResponse(resp, "addedActivities");
   }
 
   /** Mark a whole season as watched. */
@@ -431,6 +479,13 @@ function clearContentCache(tmdbIds) {
   // must not be served stale either.
   watchedListCache.clear();
 }
+
+/** Explicit access to the cache invalidation (see clearContentCache). The
+ *  history importer calls it after every write: without it the NEXT row (or the
+ *  next import) still reads the state from before the write and would either
+ *  create an entry that exists in the meantime or report "already on the list"
+ *  for a row it could have written into. */
+globalThis.WatcharrClientCache = { clearContentCache };
 
 /**
  * Minimal client for plex.tv's pin-based OAuth flow (v2 API), mirroring the

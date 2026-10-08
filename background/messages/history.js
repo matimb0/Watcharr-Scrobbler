@@ -100,7 +100,7 @@
     "watcharr:history:import": (msg) =>
       guarded(async () => ({
         ok: true,
-        results: await WatcharrHistory.importItems(msg.keys || []),
+        results: await WatcharrHistory.importItems(msg.rows || []),
       })),
 
     // Writes the COMPLETE history of the selected service to a file, optionally

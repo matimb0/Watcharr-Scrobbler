@@ -734,19 +734,66 @@ const WatcharrHistory = (() => {
     return serializeItem(item);
   }
 
-  /** Imports the selected entries (keys from the history page). */
-  async function importItems(keys) {
-    const entries = [];
-    for (const key of keys) {
-      const item = itemMap.get(key) || items.find((x) => x.key === key);
-      if (!item) continue;
-      if (!itemMap.has(item.key)) itemMap.set(item.key, item);
-      entries.push(item);
+  /** Imports the rows the history page sent.
+   *
+   * The rows arrive as DATA, not as keys of one of this instance's lists. The
+   * page shows a list this instance may not hold any more: another history page
+   * replaced it, or the background was restarted and could not restore its
+   * snapshot. Its row keys would then either address NOTHING (the run reports
+   * "nothing to do" for rows it never sent) or – worse – a DIFFERENT row of the
+   * current list, because every list numbers its rows from 0 again.
+   */
+  async function importItems(rows) {
+    const entries = (Array.isArray(rows) ? rows : []).filter(
+      (row) => row && typeof row === "object" && row.match,
+    );
+    if (!entries.length) {
+      logErr("importItems: the request carried no importable row");
+      return [];
     }
+    log("importItems:", entries.length, "rows sent by the page");
+
     const results = await importer.importItems(entries);
-    // The import wrote status/error/watchedId onto the rows.
+    // The importer wrote status/error/watchedId onto the rows it was given; take
+    // that over for the rows of THIS list that are the same row, so the session
+    // snapshot keeps saying what was imported.
+    applyImportedState(entries);
+
     await persistState();
     return results;
+  }
+
+  /** True when both rows describe the same watch (provider data only – the row
+   *  keys belong to one list instance and must not be used for this, see
+   *  importItems). */
+  function isSameRow(a, b) {
+    return (
+      !!a.isTv === !!b.isTv &&
+      a.title === b.title &&
+      (a.date || null) === (b.date || null) &&
+      (a.season == null ? null : a.season) ===
+        (b.season == null ? null : b.season) &&
+      (a.episode == null ? null : a.episode) ===
+        (b.episode == null ? null : b.episode)
+    );
+  }
+
+  /** Takes the import result of the sent rows over onto the rows of this list. */
+  function applyImportedState(rows) {
+    for (const row of rows) {
+      const item = items.find((x) => isSameRow(x, row));
+      if (!item) continue;
+      item.status = row.status;
+      item.error = row.error || null;
+      item.errorCode = row.errorCode || null;
+      if (
+        item.match &&
+        row.match &&
+        (row.status === "imported" || row.status === "updated")
+      ) {
+        item.match.watchedId = row.match.watchedId || item.match.watchedId;
+      }
+    }
   }
 
   /* ------------------------------------------------------------------ *

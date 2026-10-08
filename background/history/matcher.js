@@ -567,6 +567,38 @@
     clearContentCache();
   }
 
+  /**
+   * Drops the Watcharr-side state cached for ONE title.
+   *
+   * A write (every import step) changes exactly that state, but these caches
+   * outlive the write – `watchedEpisodesCache`/`showCache`/`movieWatchedCache`
+   * are only cleared by a reload. The importer calls this after every row it
+   * wrote, so the next row (or the next import) does not read the state from
+   * before the write: otherwise the same title would be created a second time
+   * (Watcharr answers 403) or a watch date would not be recognised as already
+   * recorded.
+   */
+  function forgetWatcharrState(tmdbId) {
+    const id = Number(tmdbId);
+    if (!Number.isFinite(id)) {
+      // No id to narrow it down to -> drop everything (same as a reload).
+      clearCache();
+      return;
+    }
+    showCache.delete(id);
+    seriesSeasonsCache.delete(id);
+    watchedEpisodesCache.delete(id);
+    for (const key of [...seasonEpisodesCache.keys()]) {
+      if (String(key).indexOf(id + ":") === 0) seasonEpisodesCache.delete(key);
+    }
+    // Keyed by watchedId (not by TMDB id), and an import writes watch dates –
+    // so the movie watch dates cannot be narrowed down here.
+    movieWatchedCache.clear();
+    if (globalThis.WatcharrClientCache) {
+      globalThis.WatcharrClientCache.clearContentCache([id]);
+    }
+  }
+
   // Ceiling for all Watcharr requests at once: the seasons of one series are
   // fetched in parallel and so are the rows of DIFFERENT series, so this keeps a
   // big import from hammering the user's Watcharr instance.
@@ -1283,5 +1315,6 @@
     getEpisodeName,
     getWatchDates,
     clearCache,
+    forgetWatcharrState,
   };
 })();
