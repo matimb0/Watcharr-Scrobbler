@@ -2029,6 +2029,64 @@ function importRow(it) {
   };
 }
 
+/**
+ * Rows sent to the background in ONE message while importing.
+ *
+ * The whole selection must not go into a single request: a large import runs for
+ * minutes, and a background that stays busy for that long is shut down by the
+ * browser (Chrome's MV3 service worker has a hard limit per event, Firefox's
+ * event page is terminated as well). The page then never gets an answer – which
+ * is exactly the "it imported a few hundred and then stopped with an error"
+ * report. Batch by batch keeps every request short, makes progress visible and
+ * leaves the rest of the selection untouched, so the next click continues where
+ * the run stopped.
+ */
+const IMPORT_BATCH_SIZE = 20;
+
+/** Applies one batch of import results to the rows that were sent. Returns the
+ *  number of rows that were written. */
+function applyImportResults(sentRows, results) {
+  const byKey = {};
+  for (const r of results) byKey[r.key] = r;
+  let written = 0;
+  for (const it of sentRows) {
+    const r = byKey[it.key];
+    if (!r) continue;
+    it.status = r.status;
+    it.error = r.error || null;
+    it.errorCode = r.code || null;
+    if (it.status === "imported" || it.status === "updated") {
+      it.selected = false;
+      if (it.match) it.match.watchedId = r.watchedId || it.match.watchedId;
+      written++;
+    }
+  }
+  return written;
+}
+
+/** One batch of rows, with a single retry when the background did not answer.
+ *  A background that was shut down mid-run is started again by the next message
+ *  (both browser engines wake it up for it), so one retry rescues a long import
+ *  from a single hiccup. */
+async function importBatch(rows) {
+  const message = {
+    type: "watcharr:history:import",
+    rows: rows.map(importRow),
+  };
+  try {
+    const resp = await sendHistoryMessage(message);
+    if (!resp || !resp.ok)
+      throw new Error(await describeError(resp, "history.loadingFailed"));
+    return resp.results || [];
+  } catch (err) {
+    dbg("import batch failed, retrying once:", err.message);
+    const resp = await sendHistoryMessage(message);
+    if (!resp || !resp.ok)
+      throw new Error(await describeError(resp, "history.loadingFailed"));
+    return resp.results || [];
+  }
+}
+
 // -- Import -------------------------------------------------------------------
 els.importBtn.addEventListener("click", async () => {
   // Exactly the rows the button counts (see updateImportButton): a locked row
@@ -2040,64 +2098,82 @@ els.importBtn.addEventListener("click", async () => {
     "info",
     await t("history.importingTitles", { count: sentRows.length }),
   );
-  let result = null; // { kind, key } for the final status popup
+  const results = [];
+  let written = 0;
+  let done = 0;
+  let failure = null;
   try {
-    const resp = await sendHistoryMessage({
-      type: "watcharr:history:import",
-      rows: sentRows.map(importRow),
-    });
-    if (!resp || !resp.ok)
-      throw new Error(await describeError(resp, "history.loadingFailed"));
-    const results = resp.results || [];
-    const byKey = {};
-    for (const r of results) byKey[r.key] = r;
-    for (const it of sentRows) {
-      const r = byKey[it.key];
-      if (!r) continue;
-      it.status = r.status;
-      it.error = r.error || null;
-      it.errorCode = r.code || null;
-      if (it.status === "imported" || it.status === "updated") {
-        it.selected = false;
-        if (it.match) it.match.watchedId = r.watchedId || it.match.watchedId;
+    for (let i = 0; i < sentRows.length; i += IMPORT_BATCH_SIZE) {
+      const batch = sentRows.slice(i, i + IMPORT_BATCH_SIZE);
+      if (i > 0) {
+        setStatus(
+          "info",
+          await t("history.importingProgress", {
+            done,
+            total: sentRows.length,
+          }),
+        );
       }
+      const batchResults = await importBatch(batch);
+      results.push(...batchResults);
+      written += applyImportResults(batch, batchResults);
+      done += batch.length;
     }
-    render();
-    const okCount = results.filter(
-      (r) => r.status === "imported" || r.status === "updated",
-    ).length;
-    const errCount = results.filter((r) => r.status === "error").length;
-    dbg(
-      "import:",
-      results.length,
-      "of",
-      sentRows.length,
-      "rows answered,",
-      okCount,
-      "written,",
-      errCount,
-      "failed",
-    );
-    result = {
-      kind: okCount > 0 ? "success" : errCount > 0 ? "error" : "info",
-      key:
-        errCount > 0 && okCount === 0
-          ? "history.importFailed"
-          : "history.importCompleted",
-      params: { summary: importSummary(results) },
-    };
   } catch (err) {
-    // Always report through the popup: it sits above the fixed toolbar and is
-    // visible no matter where the list is scrolled to, while the status bar at
-    // the top of the page is not – an error that only lands there looked like
-    // "the button did nothing".
-    dbg("import failed:", err.message);
-    result = { kind: "error", text: err.message };
+    // Report through the popup (it sits above the fixed toolbar and is visible
+    // wherever the list is scrolled to) and leave the remaining rows selected,
+    // so the next click continues the import.
+    dbg("import stopped:", err.message);
+    failure = err.message;
   } finally {
+    render();
     setImporting(false);
   }
-  if (result.text) showStatusPopup("error", result.text);
-  else showStatusPopup(result.kind, await t(result.key, result.params));
+
+  const okCount = results.filter(
+    (r) => r.status === "imported" || r.status === "updated",
+  ).length;
+  const errCount = results.filter((r) => r.status === "error").length;
+  dbg(
+    "import:",
+    done,
+    "of",
+    sentRows.length,
+    "rows sent,",
+    written,
+    "written,",
+    errCount,
+    "failed",
+    failure ? "stopped: " + failure : "",
+  );
+
+  if (failure) {
+    if (!results.length) {
+      showStatusPopup("error", failure);
+      return;
+    }
+    showStatusPopup(
+      "error",
+      await t("history.importPartial", {
+        done,
+        total: sentRows.length,
+        remaining: sentRows.length - done,
+        reason: failure,
+      }),
+    );
+    return;
+  }
+
+  const ok = okCount > 0 || errCount === 0;
+  showStatusPopup(
+    ok && okCount > 0 ? "success" : ok ? "info" : "error",
+    await t(
+      okCount > 0 || errCount === 0
+        ? "history.importCompleted"
+        : "history.importFailed",
+      { summary: importSummary(results) },
+    ),
+  );
 });
 
 // -- Export of the complete history into a file -------------------------------

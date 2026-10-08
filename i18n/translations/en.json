@@ -226,6 +226,8 @@
     "importingTitles": "Importing {count} titles to Watcharr …",
     "importCompleted": "Import completed: {summary}",
     "importFailed": "Import failed: {summary}",
+    "importingProgress": "Importing … {done} of {total} entries",
+    "importPartial": "Import stopped after {done} of {total} entries: {reason} · {remaining} entries are still selected – press “Import selected” again to continue.",
     "nothingToDo": "nothing to do",
     "statusImported": "added",
     "statusUpdated": "updated",

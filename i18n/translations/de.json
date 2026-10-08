@@ -226,6 +226,8 @@
     "importingTitles": "Importiere {count} Titel nach Watcharr …",
     "importCompleted": "Import abgeschlossen: {summary}",
     "importFailed": "Import fehlgeschlagen: {summary}",
+    "importingProgress": "Importiere … {done} von {total} Einträgen",
+    "importPartial": "Import nach {done} von {total} Einträgen abgebrochen: {reason} · {remaining} Einträge sind weiterhin ausgewählt – „Ausgewählte importieren“ erneut drücken, um fortzufahren.",
     "nothingToDo": "nichts zu tun",
     "statusImported": "hinzugefügt",
     "statusUpdated": "aktualisiert",

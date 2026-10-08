@@ -489,6 +489,12 @@ const WatcharrHistory = (() => {
     delivered = 0;
     cancelRequested = false;
     matcher.clearCache();
+    // A fresh list re-reads the Watcharr state of every title, so the entries
+    // this extension created earlier must not be assumed to still be there
+    // (see importer.clearCreatedEntries).
+    if (typeof importer.clearCreatedEntries === "function") {
+      importer.clearCreatedEntries();
+    }
     historyLoadId++;
 
     // The previous list is gone for good now (the page cleared it as well), so

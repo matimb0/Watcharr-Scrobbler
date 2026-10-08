@@ -11,6 +11,44 @@
   const { subtractMinutes, log, logErr } = globalThis.WatcharrUtil;
   const userError = WatcharrErrors.create;
 
+  /**
+   * Titles this extension CREATED recently: "tv:12" / "movie:12" -> watchedId.
+   *
+   * Watcharr keeps one entry per title, so only the first row of a title may
+   * create it; every further row writes into that entry. A large import is sent
+   * in batches (see history/history.js), so this has to outlive one call –
+   * otherwise every batch would ask Watcharr again whether the title is already
+   * on the list (hundreds of needless requests for a series with hundreds of
+   * episodes, and one more chance to create a duplicate per batch).
+   *
+   * Entries expire and the map is cleared whenever a fresh list is loaded, so a
+   * title that was deleted in Watcharr in the meantime is not written into.
+   */
+  const createdEntries = new Map(); // key -> { watchedId, at }
+  const CREATED_TTL_MS = 10 * 60 * 1000;
+
+  /** Remembers the entry a row just created (see createdEntries). */
+  function rememberCreated(key, watchedId) {
+    if (!key || !watchedId) return;
+    createdEntries.set(key, { watchedId, at: Date.now() });
+  }
+
+  /** Known entry of a title created by this extension recently, or null. */
+  function knownCreated(key) {
+    const hit = createdEntries.get(key);
+    if (!hit) return null;
+    if (Date.now() - hit.at > CREATED_TTL_MS) {
+      createdEntries.delete(key);
+      return null;
+    }
+    return hit.watchedId;
+  }
+
+  /** Forgets the created entries (a fresh list / reload owns the state again). */
+  function clearCreatedEntries() {
+    createdEntries.clear();
+  }
+
   /** Result object for a failed step. */
   function failure(err) {
     return {
@@ -62,27 +100,26 @@
    * does what Watcharr's own UI does: a status change adds the activity, and the
    * date the service reported is then stored on it.
    *
-   * A status change is therefore REQUIRED – and for an entry that is already
-   * FINISHED that means changing it away and back, because Watcharr only creates
-   * the play when the status really changes (see UpdateWatched). Without that
-   * step the watch date of a rewatch was never written: the row stayed "date
-   * will be added" in the list forever. The intermediate change is removed
-   * again, so exactly one dated play of this row remains.
+   * A status change is therefore REQUIRED – and Watcharr only creates the
+   * activity when the status really changes, so an entry that is already
+   * FINISHED needs the detour over WATCHING. That detour is taken whenever a
+   * date is to be stored: the row's `watchedStatus` may be unknown or outdated
+   * (nothing is read here, see the importer's cache invalidation), and without
+   * the detour the date of the rewatch was silently dropped. The intermediate
+   * activity is removed again, so exactly one dated play of this row remains.
    */
   async function addMovieWatch(client, item) {
-    const { watchedId, watchedStatus } = item.match;
+    const { watchedId } = item.match;
     // The date of this very watch is already recorded -> nothing to add.
-    if (watchedStatus === "FINISHED" && item.watchDateMatched) {
-      return { status: "updated" };
-    }
+    if (item.watchDateMatched) return { status: "updated" };
 
     let intermediateActivity = null;
-    if (watchedStatus === "FINISHED") {
+    if (item.date) {
       try {
         const resp = await client.updateWatched(watchedId, {
           status: "WATCHING",
         });
-        intermediateActivity = resp && resp.newActivity;
+        intermediateActivity = (resp && resp.newActivity) || null;
       } catch (err) {
         return failure(err);
       }
@@ -351,17 +388,18 @@
     const client = new WatcharrClient(settings);
 
     const ordered = entries.slice().sort(byDateAscending);
-    const created = new Map(); // "tv:12" / "movie:12" -> watchedId of this run
     const results = [];
 
     for (const item of ordered) {
       const key = item.match
         ? (item.isTv ? "tv:" : "movie:") + item.match.tmdbId
         : null;
-      // Entry created just above -> write into that one instead of creating it
-      // a second time (Watcharr allows one entry per title).
-      if (key && !item.match.watchedId && created.has(key)) {
-        item.match.watchedId = created.get(key);
+      // A title that was created by an EARLIER row (of this call or of an
+      // earlier batch of the same import) is written into instead of being
+      // created a second time (Watcharr allows one entry per title).
+      if (key && !item.match.watchedId) {
+        const known = knownCreated(key);
+        if (known) item.match.watchedId = known;
       }
 
       // One row may never abort the run: an unexpected error (a shape the row
@@ -390,7 +428,7 @@
 
       if (result.watchedId && item.match) {
         item.match.watchedId = result.watchedId;
-        created.set(key, result.watchedId);
+        rememberCreated(key, result.watchedId);
       }
 
       results.push({
@@ -407,5 +445,5 @@
     return results;
   }
 
-  globalThis.WatcharrHistoryImporter = { importItems };
+  globalThis.WatcharrHistoryImporter = { importItems, clearCreatedEntries };
 })();
