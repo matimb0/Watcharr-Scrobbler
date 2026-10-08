@@ -115,13 +115,19 @@ service tab.
 the current service (Netflix, Prime Video or Jellyfin) into a file – nothing is
 imported into Watcharr. Choose **CSV** or **JSON**:
 
-| Column                                        | Meaning                                                     |
-| --------------------------------------------- | ----------------------------------------------------------- |
-| `service` / `serviceId`                       | Netflix, Prime Video or Jellyfin                            |
-| `title`, `type`, `year`                       | Title as reported by the service (`type` = `movie` \| `tv`) |
-| `season`, `episode`                           | Only for series (empty for movies)                          |
-| `watchedAt`                                   | Watch date/time (ISO-8601, UTC)                             |
-| `tmdbId`, `tmdbType`, `tmdbTitle`, `tmdbYear` | Added optionally (see below)                                |
+| Column                                        | Meaning                                                                                                   |
+| --------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `service` / `serviceId`                       | Netflix, Prime Video or Jellyfin                                                                          |
+| `profile`                                     | Profile/user the export was taken from (“Max”, a Jellyfin user – empty when the service cannot report it) |
+| `title`, `type`, `year`                       | Title as reported by the service (`type` = `movie` \| `tv`)                                               |
+| `season`, `episode`                           | Only for series (empty for movies)                                                                        |
+| `watchedAt`                                   | Watch date/time (ISO-8601, UTC)                                                                           |
+| `tmdbId`, `tmdbType`, `tmdbTitle`, `tmdbYear` | Added optionally (see below)                                                                              |
+
+The `profile` column names the **profile the history belongs to** – the Netflix
+profile, the selected Prime Video profile or the Jellyfin user. It is metadata
+of the export (helper for several profiles of one account); the import itself
+ignores it.
 
 With **“Add TMDB data”** (enabled by default) every entry is additionally
 matched against the **TMDB API** – the identical entries of a series share one
@@ -152,6 +158,14 @@ side by side, and the selected ones can be imported with **“Import selected”
 - The file order does not matter: entries are sorted by their watch date
   (newest first), exactly like a service history, so **View › Newest first /
   Oldest first** behaves identically.
+- A file that contains **more than one service** (a merged file, see below)
+  names the **service and the profile** on every entry: two small badges on
+  their own line above the title of the left column, so it is visible at a
+  glance where each entry comes from.
+- The **filter** (toolbar) searches the service and the profile as well:
+  `netflix` or `max` narrows a merged list down to those entries.
+  **“Select all”** then selects exactly the rows that are **displayed**, so
+  nothing is imported invisibly.
 - Besides our own export, other column spellings are understood
   (`name`, `seasonNumber`/`episodeNumber`, `watched_date`, nested
   `ids.tmdb`, `Film`/`Series` type names, …).
@@ -177,8 +191,10 @@ services end up in a single list and a single file.
   unless switched off – **put into the list** right away, so it can be matched
   and imported into Watcharr without a detour.
 - The merged file keeps the columns of a normal export (including the
-  `service`/`serviceId` of each entry) and is therefore importable again, both
-  here and in other services.
+  `service`/`serviceId` and the `profile` of each entry) and is therefore
+  importable again, both here and in other services. The profile stays **per
+  entry**, so a merged file can mix several profiles; the JSON header lists all
+  of them (`"profile": "Max + Anna"`).
 
 <br>
 

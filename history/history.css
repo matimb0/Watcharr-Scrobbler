@@ -615,14 +615,10 @@ button:disabled {
 }
 
 /* Service of a row – only shown for an imported file that mixes several
-   services (see setFileServices): a small badge on its OWN line above the
-   title, colored per service so the rows of one service are recognizable at a
-   glance. The title is a text node of the same box and therefore starts on the
-   next line (an anonymous inline box after a block-level badge). */
+   services (see setFileServices): a small badge above the title, colored per
+   service so the rows of one service are recognizable at a glance. */
 .service-badge {
-  display: block;
-  width: fit-content;
-  margin-bottom: 4px;
+  display: inline-block;
   padding: 1px 7px;
   border-radius: 999px;
   border: 1px solid currentColor;
@@ -632,6 +628,31 @@ button:disabled {
   letter-spacing: 0.04em;
   text-transform: uppercase;
   white-space: nowrap;
+}
+
+/* Profile of a row, next to the service badge on the SAME line (see
+   .row-badges): neutral, so it is never mistaken for the service badge. */
+.profile-badge {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg-elev-2);
+  color: var(--text-dim);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+/* The badges of a row share one line of their own; the title follows below
+   because this is a block-level element inside the name box. */
+.row-badges {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+  margin-bottom: 4px;
 }
 
 /* Fallback for browsers without color-mix(). */

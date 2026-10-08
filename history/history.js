@@ -717,6 +717,30 @@ function serviceBadgeOf(it) {
   );
 }
 
+/** Profile/user badge of one row, shown next to the service badge (same
+ *  condition: an imported file that mixes several services – a merged file can
+ *  combine profiles of one service, so the name belongs on the row). */
+function profileBadgeOf(it) {
+  if (!showRowServices) return "";
+  const name = (it.profile || "").trim();
+  if (!name) return "";
+  return (
+    '<span class="profile-badge" title="' +
+    escapeHtml(ts("history.profileBadgeTitle", { profile: name })) +
+    '">' +
+    escapeHtml(name) +
+    "</span>"
+  );
+}
+
+/** The badges of a row's provider side (service and profile), wrapped in their
+ *  own block so the title always starts below them – an empty string when the
+ *  row carries none. */
+function rowBadgesOf(it) {
+  const badges = serviceBadgeOf(it) + profileBadgeOf(it);
+  return badges ? '<span class="row-badges">' + badges + "</span>" : "";
+}
+
 /** The match had to be guessed (several same-titled entries, no year known).
  *  Shown on the Watcharr side as a hint to verify the match by hand. */
 function matchAmbiguous(it) {
@@ -782,7 +806,7 @@ function rowHtml(it) {
     " /></label>" +
     '<div class="provider">' +
     '<div class="name">' +
-    serviceBadgeOf(it) +
+    rowBadgesOf(it) +
     escapeHtml(it.title) +
     "</div>" +
     (providerEp
@@ -884,6 +908,7 @@ function matchesFilter(it) {
     it.match && it.match.name,
     it.serviceName,
     it.serviceId,
+    it.profile,
   ];
   return values.some(
     (value) => value && String(value).toLowerCase().includes(filter),
@@ -2103,10 +2128,16 @@ function rowsToCsv(rows) {
   return WatcharrHistoryFileExport.toCsv(rows);
 }
 
-/** JSON text of the export rows, with the metadata header of this export. */
+/** JSON text of the export rows, with the metadata header of this export.
+ *  The profile is read from the rows (the background puts the one the service
+ *  reported on every row, see background/history/index.js). */
 function rowsToJson(rows) {
   const svc = WatcharrServices.byId(serviceId);
-  return WatcharrHistoryFileExport.toJson(rows, svc ? svc.name : serviceId);
+  return WatcharrHistoryFileExport.toJson(
+    rows,
+    svc ? svc.name : serviceId,
+    WatcharrHistoryFileMerge.profileNames(rows),
+  );
 }
 
 /** Triggers the download of a generated text file (blob URL, no permission). */
@@ -2377,6 +2408,8 @@ function buildMergedFile(files) {
           merged.rows,
           ts("history.mergeServiceName"),
         ),
+        // … and which profiles those files were exported from.
+        WatcharrHistoryFileMerge.profileNames(merged.rows),
       ),
       mime: "application/json",
       count: rows.length,

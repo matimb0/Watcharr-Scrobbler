@@ -280,7 +280,7 @@
    * pinged and re-injected when it does not report this version. Keep in sync
    * with CONTENT_SCRIPT_VERSION in content/shared/messaging.js.
    */
-  const CONTENT_SCRIPT_VERSION = 3;
+  const CONTENT_SCRIPT_VERSION = 4;
 
   /** True when a `watcharr:ping` answer came from this build's content script. */
   function isCurrentContent(ping) {

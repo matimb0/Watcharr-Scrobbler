@@ -36,6 +36,11 @@
     apiUrl: "https://atv-ps.primevideo.com",
     historyUrl: null,
     itemUrl: null,
+    profileUrl: null,
+    // Name of the profile this history belongs to (see ensureProfile) – "" while
+    // unknown. The export file carries it, so several profiles of one account
+    // can be told apart there.
+    profileName: "",
   };
 
   /** Runs an Amazon API request through the background (see file header). */
@@ -103,6 +108,11 @@
         "&deviceTypeID=" +
         DEVICE_TYPE_ID +
         "&firmware=1&gascEnabled=true&resourceUsage=CacheResources&videoMaterialType=Feature&titleDecorationScheme=primary-content&uxLocale=en_US";
+
+      // Which profiles the account has and which one is selected (same route the
+      // Prime Video web app itself uses). Only read for the export, see
+      // ensureProfile.
+      api.profileUrl = api.hostUrl + apiPath + "/getProfiles";
 
       api.active = true;
     } catch (err) {
@@ -303,6 +313,34 @@
   }
 
   /**
+   * Name of the profile the history belongs to (`getProfiles` marks the
+   * selected one). Best effort: it is only metadata for the export file, so a
+   * failure simply leaves the name empty instead of failing the history.
+   */
+  let profileTried = false;
+
+  async function ensureProfile() {
+    if (api.profileName || profileTried) return api.profileName;
+    profileTried = true;
+    try {
+      await ensureApi();
+      const data = await amazonJson(api.profileUrl);
+      const profiles =
+        data && Array.isArray(data.profiles) ? data.profiles : [];
+      const selected = profiles.find((p) => p && p.isSelected) || null;
+      const name =
+        selected && selected.name ? String(selected.name).trim() : "";
+      if (name) api.profileName = name;
+    } catch (err) {
+      console.warn(
+        "[watcharr] Prime Video profile could not be read:",
+        (err && err.message) || err,
+      );
+    }
+    return api.profileName;
+  }
+
+  /**
    * One page of the Prime Video history. `loadId` identifies a fresh load: a
    * new id resets the buffer, so the crawl starts at the top of the history
    * again.
@@ -319,6 +357,9 @@
       await ensureApi();
       historyState.started = true;
     }
+    // Started next to the crawl: the name is metadata for the export file and
+    // must not delay it.
+    const profilePromise = ensureProfile();
 
     const needed = (page + 1) * PAGE_SIZE;
     if (historyState.raw.length < needed && !historyState.reachedEnd) {
@@ -336,6 +377,7 @@
       entries: enriched.filter(Boolean),
       done:
         historyState.reachedEnd && start + PAGE_SIZE >= historyState.raw.length,
+      profile: await profilePromise,
     };
   }
 

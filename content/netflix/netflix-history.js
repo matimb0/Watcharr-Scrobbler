@@ -294,6 +294,9 @@
       status: "ok",
       entries: await enrich(raw),
       done: raw.length === 0,
+      // Which Netflix profile this history belongs to – metadata for the export
+      // file (the probe reads the name of the logged-in profile).
+      profile: session.profileName || "",
     };
   }
 

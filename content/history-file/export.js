@@ -30,6 +30,10 @@
   const EXPORT_COLUMNS = [
     "service",
     "serviceId",
+    // Profile/user the export was taken from ("Max" on Netflix, the Jellyfin
+    // user). Provider metadata like `service`, so several profiles of one
+    // account stay distinguishable in a file (and in a merged file).
+    "profile",
     "title",
     "type",
     "year",
@@ -45,16 +49,19 @@
 
   /**
    * Flattens one service entry into the row shape of a history export.
-   * The data comes from the service itself (plus which service it came from);
-   * the `tmdb*` fields stay empty unless the export additionally resolves the
-   * title to TMDB through the Watcharr instance (see
+   * The data comes from the service itself (plus which service it came from and
+   * which of its profiles); the `tmdb*` fields stay empty unless the export
+   * additionally resolves the title to TMDB through the Watcharr instance (see
    * background/history/exporter.js).
    */
-  function entryToExportRow(entry, svc) {
+  function entryToExportRow(entry, svc, profile) {
     const isTv = !!entry.isTv;
     return {
       service: svc ? svc.name : "",
       serviceId: svc ? svc.id : "",
+      // The name the service reported for the loaded history (empty for
+      // services that cannot report one).
+      profile: profile || entry.profile || "",
       title: entry.title || "",
       type: isTv ? "tv" : "movie",
       // The year the SERVICE reported – this column is provider data, so the
@@ -99,10 +106,12 @@
     return rows.some((r) => r && r.tmdbId) ? "tmdb" : null;
   }
 
-  /** JSON export with metadata header (service, date, entry count, ID scheme).
-   *  `serviceName` is what the history page shows for the current service (the
-   *  caller resolves it, so this module needs no knowledge of the selection). */
-  function toJson(rows, serviceName) {
+  /** JSON export with metadata header (service, profile, date, entry count, ID
+   *  scheme). `serviceName` is what the history page shows for the current
+   *  service and `profile` the name that service reported for the exported
+   *  history – both are resolved by the caller, so this module needs no
+   *  knowledge of the selection. */
+  function toJson(rows, serviceName, profile) {
     let version = null;
     try {
       version = browser.runtime.getManifest().version;
@@ -115,6 +124,9 @@
           extension: "Watcharr Scrobbler",
           version,
           service: serviceName,
+          // Which profile/user the export was taken from. A merged file lists
+          // every profile it combines ("Max + Anna"); "" when unknown.
+          profile: profile || "",
           exportedAt: new Date().toISOString(),
           count: rows.length,
           // Which IDs the entries carry (null = no TMDB data in this export).

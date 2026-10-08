@@ -56,6 +56,29 @@
     return null;
   }
 
+  /**
+   * Name of the Jellyfin user this history belongs to (`/Users/Me` of the
+   * logged-in token). Best effort: it is metadata for the export file, so a
+   * failure leaves the name empty instead of failing the history.
+   */
+  let profileName = null; // null = not asked yet
+
+  async function ensureProfile() {
+    if (profileName !== null) return profileName;
+    profileName = "";
+    try {
+      const me = await WatcharrJellyfinAuth.jellyfinJson("/Users/Me");
+      const name = me && me.Name ? String(me.Name).trim() : "";
+      if (name) profileName = name;
+    } catch (err) {
+      console.warn(
+        "[watcharr] Jellyfin user name could not be read:",
+        (err && err.message) || err,
+      );
+    }
+    return profileName;
+  }
+
   /** One page of the Jellyfin history, newest first. */
   async function fetchForUi(page) {
     const login = WatcharrJellyfinAuth.getLogin();
@@ -89,6 +112,9 @@
       entries: raw.map(itemToEntry).filter(Boolean),
       done:
         raw.length < PAGE_SIZE || (total > 0 && start + raw.length >= total),
+      // Which Jellyfin user this history belongs to – metadata for the export
+      // file (several users of the same server can be told apart there).
+      profile: await ensureProfile(),
     };
   }
 

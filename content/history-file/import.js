@@ -73,6 +73,9 @@
   const FILE_TMDB_YEAR_KEYS = ["tmdbyear"];
   const FILE_SERVICE_KEYS = ["service", "servicename", "provider", "source"];
   const FILE_SERVICE_ID_KEYS = ["serviceid", "providerid", "sourceid"];
+  // Profile/user the row was exported from – so a file (or a merged file) can
+  // say WHICH profile of a service a watch belongs to.
+  const FILE_PROFILE_KEYS = ["profile", "profilename", "profileuser", "user"];
 
   const FILE_TV_TYPES =
     /^(tv|tvshow|tvseries|show|shows|series|serie|episode)$/;
@@ -199,6 +202,8 @@
       // that information in the merged file – the import itself ignores it.
       service: toTrimmedString(pickField(o, FILE_SERVICE_KEYS)) || null,
       serviceId: toTrimmedString(pickField(o, FILE_SERVICE_ID_KEYS)) || null,
+      // Profile/user of that service (also only carried along, see above).
+      profile: toTrimmedString(pickField(o, FILE_PROFILE_KEYS)) || null,
     };
   }
 
@@ -330,6 +335,9 @@
       // – the history page shows it when they differ (see history/history.js).
       service: row.service || null,
       serviceId: row.serviceId || null,
+      // Profile/user of that service (same purpose as above, and shown next to
+      // the service badge when the file mixes several services).
+      profile: row.profile || null,
     };
   }
 

@@ -100,6 +100,9 @@
     return {
       service: row.service || "",
       serviceId: row.serviceId || "",
+      // The profile the source file was exported from (see export.js) – kept so
+      // a merged file still says which profile a watch belongs to.
+      profile: row.profile || "",
       title: row.title || "",
       type: isTv ? "tv" : "movie",
       year: row.year != null ? row.year : null,
@@ -137,6 +140,13 @@
     return names.length ? names.join(" + ") : fallback || "";
   }
 
+  /** Profiles the merged rows came from ("Max + Anna"), for the metadata header
+   *  of a merged JSON export. `fallback` when no source file named one. */
+  function profileNames(rows, fallback) {
+    const names = uniqueValues(rows, "profile");
+    return names.length ? names.join(" + ") : fallback || "";
+  }
+
   /** Service part of the merged file name: the ids of the source exports
    *  ("netflix-primevideo") or `fallback` when the files carry none. Sorted, so
    *  the name does not depend on the order of the chosen files. */
@@ -159,6 +169,7 @@
     mergeRows,
     toExportRows,
     serviceName,
+    profileNames,
     serviceSlug,
   };
 })();

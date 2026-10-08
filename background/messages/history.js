@@ -122,6 +122,7 @@
           enriched: !!data.enriched,
           matched: data.matched || 0,
           cancelled: !!data.cancelled,
+          profile: data.profile || "",
         };
       }),
 

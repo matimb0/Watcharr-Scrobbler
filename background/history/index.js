@@ -60,6 +60,10 @@ const WatcharrHistory = (() => {
   let exportTotal = 0;
 
   let serviceId = "netflix"; // service whose history is loaded
+  // Name of the profile/user the service reported for the loaded history
+  // ("Max" on Netflix, a Jellyfin user name, …). Metadata only: it is written
+  // into the export file so several profiles can be told apart there.
+  let serviceProfile = "";
   let source = "service"; // "service" (open tab) | "file" (imported file)
   let fileRows = []; // parsed rows of the loaded file
   let fileName = ""; // name of the loaded file (shown on the history page)
@@ -191,7 +195,12 @@ const WatcharrHistory = (() => {
 
   /** Selects the service whose history is loaded (id from WatcharrServices). */
   function setService(id) {
-    if (WatcharrServices.byId(id)) serviceId = id;
+    if (WatcharrServices.byId(id)) {
+      // A different service means a different profile/user – the name of the
+      // previous one must not end up in this service's export file.
+      if (id !== serviceId) serviceProfile = "";
+      serviceId = id;
+    }
   }
 
   /** Chooses where the next load comes from: "service" or "file". */
@@ -265,6 +274,10 @@ const WatcharrHistory = (() => {
         entry.service || (source === "file" ? null : currentServiceName()),
       serviceId:
         entry.serviceId || (source === "file" ? null : currentServiceId()),
+      // Profile/user of the row (an imported file carries the one its export
+      // was taken from). Shown next to the service badge when a file mixes
+      // several services (see history/history.js).
+      profile: entry.profile || null,
       // true when season/episode had to be derived (not reported by the service)
       episodeDerived: false,
       // what the derivation used: "date" (exact watch date) or "name" (episode name)
@@ -309,6 +322,7 @@ const WatcharrHistory = (() => {
       providerNote: item.providerNote || null,
       serviceName: item.serviceName || null,
       serviceId: item.serviceId || null,
+      profile: item.profile || null,
       episodeDerived: !!item.episodeDerived,
       episodeSource: item.episodeSource || null,
       match: item.match,
@@ -333,7 +347,11 @@ const WatcharrHistory = (() => {
    */
   async function entriesForPage(pageIndex) {
     if (source !== "file") {
-      return loader.fetchPage(serviceId, historyLoadId, pageIndex);
+      const page = await loader.fetchPage(serviceId, historyLoadId, pageIndex);
+      // Remember which profile/user the service reported for this history – it
+      // becomes the `profile` column of the export file (see collectForExport).
+      if (page.profile) serviceProfile = page.profile;
+      return page;
     }
     const start = pageIndex * BATCH_SIZE;
     const slice = fileRows.slice(start, start + BATCH_SIZE);
@@ -903,15 +921,16 @@ const WatcharrHistory = (() => {
       let pages = 0;
       let pageIndex = 0;
       while (!finished && pages < MAX_HISTORY_PAGES && !cancelRequested) {
-        const { entries, done: pageDone } = await loader.fetchPage(
-          serviceId,
-          historyLoadId,
-          pageIndex,
-        );
+        const {
+          entries,
+          done: pageDone,
+          profile,
+        } = await loader.fetchPage(serviceId, historyLoadId, pageIndex);
         if (cancelRequested) break; // aborted while the page was fetched
+        if (profile) serviceProfile = profile;
 
         for (const entry of entries) {
-          rows.push(fileExport.entryToExportRow(entry, svc));
+          rows.push(fileExport.entryToExportRow(entry, svc, serviceProfile));
         }
         exportCount = rows.length;
         // Only an empty page is a sure end – a last page may carry rows AND
@@ -949,6 +968,9 @@ const WatcharrHistory = (() => {
         truncated: !finished,
         enriched: enrich,
         matched: exportMatched,
+        // Profile/user the service reported for this history – the file carries
+        // it as metadata and on every row (see entryToExportRow).
+        profile: serviceProfile,
       };
     } finally {
       exportRunning = false;

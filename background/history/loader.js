@@ -234,7 +234,10 @@
       "entries, done:",
       !!resp.done,
     );
-    return { entries, done: !!resp.done };
+    // `profile` is the name of the profile/user the service reported for this
+    // history (Netflix profile, Prime Video profile, Jellyfin user). It is only
+    // metadata for the export file – services that cannot report it leave it "".
+    return { entries, done: !!resp.done, profile: resp.profile || "" };
   }
 
   globalThis.WatcharrHistoryLoader = { ensureServiceTab, fetchPage };

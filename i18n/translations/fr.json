@@ -257,6 +257,7 @@
     "metadataPerson": "Personne",
     "metadataOn": "le {date}",
     "serviceBadgeTitle": "Cette entrée provient de {service} (du fichier importé).",
+    "profileBadgeTitle": "Cette entrée a été regardée dans le profil {profile} (du fichier importé).",
     "noMatchFilter": "Aucune entrée pour le filtre \"{filter}\".",
     "error": {
       "generic": "Une erreur est survenue : {reason}",
