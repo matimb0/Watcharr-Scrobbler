@@ -34,6 +34,7 @@ importScripts(
   "messages/netflix.js",
   "messages/primevideo.js",
   "messages/ard.js",
+  "messages/zdf.js",
   "messages/history.js",
   "background.js",
 );

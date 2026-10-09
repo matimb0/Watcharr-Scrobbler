@@ -4,15 +4,16 @@ A browser extension (Firefox and Chrome) that works like the
 [Universal Trakt Scrobbler](https://github.com/trakt-tools/universal-trakt-scrobbler) –
 but **only for your own, self-hosted [Watcharr](https://github.com/sbondCo/Watcharr)-instance**.
 
-**Current status:** **Netflix**, **Prime Video**, the **ARD Mediathek** and
-**Jellyfin** are integrated as services.
+**Current status:** **Netflix**, **Prime Video**, the **ARD Mediathek**, the
+**ZDF Mediathek** and **Jellyfin** are integrated as services.
 
 <br>
 
 ## What it does
 
 - Automatically detects what is currently playing on Netflix, Prime Video, the
-  ARD Mediathek or Jellyfin (movie or series, including season & episode).
+  ARD Mediathek, the ZDF Mediathek or Jellyfin (movie or series, including
+  season & episode).
 - Searches for the title on **TMDB** (in the language selected in the settings)
   and adds it to your Watcharr watchlist. Whether a title is already on your
   list, which episodes you watched and every entry the add-on writes come from
@@ -29,7 +30,7 @@ but **only for your own, self-hosted [Watcharr](https://github.com/sbondCo/Watch
 - For series, the individual **episode** is marked as watched – Watcharr
   automatically updates the series status (“Automate Show Statuses”).
 - **History page:** Import your previous viewing history (Netflix, Prime
-  Video, ARD Mediathek or Jellyfin) in a controlled way – with comparison, match
+  Video, ARD Mediathek, ZDF Mediathek or Jellyfin) in a controlled way – with comparison, match
   correction, and selective import (movies as watched series episodes
   individually). Exports of several services can be merged into one file.
 
@@ -41,7 +42,8 @@ but **only for your own, self-hosted [Watcharr](https://github.com/sbondCo/Watch
 > service hosts, to `api.themoviedb.org` (titles, seasons and episode names) and
 > optionally to your self-hosted services at runtime. For the ARD Mediathek this
 > also includes `firestore.googleapis.com`, where ARD itself stores its users'
-> watch history.
+> watch history; for the ZDF Mediathek `api.zdf.de` (clip metadata and viewing
+> history).
 
 **Firefox**
 
@@ -90,8 +92,8 @@ but **only for your own, self-hosted [Watcharr](https://github.com/sbondCo/Watch
    the **TMDB API** directly, in the language selected under “General”. The
    add-on ships with a TMDB API key, so nothing has to be configured; if you
    prefer your own key (it is used instead), enter it in the “TMDB” section.
-7. Open Netflix, Prime Video, the ARD Mediathek or your Jellyfin server and get
-   started 🍿
+7. Open Netflix, Prime Video, the ARD Mediathek, the ZDF Mediathek or your
+   Jellyfin server and get started 🍿
 
 You can see the status and progress at any time in the **Popup**.
 
@@ -104,13 +106,19 @@ You can see the status and progress at any time in the **Popup**.
 > covers what the ARD Mediathek still keeps – at most the **240 most recent**
 > entries, completed ones included. Live streams are not scrobbled.
 
+> **ZDF Mediathek:** Needs a ZDF account, and its viewing history additionally
+> requires **activated personalization** in the ZDF privacy settings. The
+> history is read read-only and covers at most the **100 most recent** entries.
+> Live streams and trailers are not scrobbled.
+
 <br>
 
 ## History import
 
 The **History page** (Popup → **“History”**) gives you full
 Control similar to Universal Trakt Scrobbler: a **side-by-side comparison** of each
-watched title (Netflix, Prime Video, the ARD Mediathek or Jellyfin – the service
+watched title (Netflix, Prime Video, the ARD Mediathek, the ZDF Mediathek or
+Jellyfin – the service
 is selected automatically from the open tab) with the automatically found
 **Watcharr match**, including **match correction** and **selective import**. No
 separate synchronization is required – the page loads the history directly from
@@ -121,12 +129,12 @@ the open service tab.
 ## History export
 
 **“Data” › “Export …”** on the history page writes the **complete viewing history** of
-the current service (Netflix, Prime Video, the ARD Mediathek or Jellyfin) into a
-file – nothing is imported into Watcharr. Choose **CSV** or **JSON**:
+the current service (Netflix, Prime Video, the ARD Mediathek, the ZDF Mediathek
+or Jellyfin) into a file – nothing is imported into Watcharr. Choose **CSV** or **JSON**:
 
 | Column                                        | Meaning                                                                                                                    |
 | --------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| `service` / `serviceId`                       | Netflix, Prime Video, ARD Mediathek or Jellyfin                                                                            |
+| `service` / `serviceId`                       | Netflix, Prime Video, ARD Mediathek, ZDF Mediathek or Jellyfin                                                             |
 | `profile`                                     | Profile/user the export was taken from (“Max”, a Jellyfin user, the ARD account – empty when the service cannot report it) |
 | `title`, `type`, `year`                       | Title as reported by the service (`type` = `movie` \| `tv`)                                                                |
 | `season`, `episode`                           | Only for series (empty for movies)                                                                                         |
@@ -223,8 +231,8 @@ what data the extension handles, where it is stored, and where it is
 transmitted. Short version: everything stays on your device and goes only to the
 addresses you configured (your Watcharr and Jellyfin instances), plus Netflix,
 Prime Video, the ARD Mediathek (including `firestore.googleapis.com`, where ARD
-itself stores its users' watch history), TMDB and plex.tv as required for the
-features. No developer server, no analytics, no remote code.
+itself stores its users' watch history), the ZDF Mediathek (`api.zdf.de`), TMDB
+and plex.tv as required for the features. No developer server, no analytics, no remote code.
 
 <br>
 

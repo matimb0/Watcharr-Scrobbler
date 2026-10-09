@@ -14,7 +14,7 @@
    * background uses it to notice a tab that still runs an older build of the
    * extension and re-injects the scripts into it.
    */
-  const CONTENT_SCRIPT_VERSION = 4;
+  const CONTENT_SCRIPT_VERSION = 5;
 
   /**
    * Registers the listeners.

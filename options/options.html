@@ -17,8 +17,8 @@
         <div>
           <h1 data-i18n="page.title">Watcharr Scrobbler</h1>
           <p class="subtitle" data-i18n="page.subtitle">
-            Scrobble Netflix, Prime Video, ARD Mediathek &amp; Jellyfin →
-            Watcharr
+            Scrobble Netflix, Prime Video, ARD Mediathek, ZDF Mediathek &amp;
+            Jellyfin → Watcharr
           </p>
         </div>
       </header>
@@ -203,8 +203,8 @@
               >Scrobbling enabled</strong
             >
             <p class="hint" data-i18n="settings.scrobblingHint">
-              Automatically add movies/shows from Netflix, Prime Video, ARD
-              Mediathek and Jellyfin to Watcharr.
+              Automatically add movies/shows from Netflix, Prime Video, the ARD
+              Mediathek, the ZDF Mediathek and Jellyfin to Watcharr.
             </p>
           </div>
           <label class="switch">
@@ -252,8 +252,8 @@
         <h2 data-i18n="settings.howItWorks">How it works</h2>
         <ol class="steps">
           <li data-i18n="settings.step1">
-            Open Netflix, Prime Video, the ARD Mediathek or your Jellyfin server
-            and start a movie or series.
+            Open Netflix, Prime Video, the ARD Mediathek, the ZDF Mediathek or
+            your Jellyfin server and start a movie or series.
           </li>
           <li data-i18n="settings.step2">
             The add-on detects the title, season, and episode from the service's
@@ -291,6 +291,14 @@
           The ARD Mediathek needs an ARD/ZDF account: scrobbling and history use
           the login of this browser. Its history only covers what the ARD
           Mediathek still keeps (at most 240 entries).
+        </p>
+
+        <!-- ZDF keeps its viewing history in its own service, behind a login
+             and the personalization consent (see content/zdf/zdf-history.js). -->
+        <p class="hint zdf-hint" data-i18n-html="settings.zdfNote">
+          The ZDF Mediathek needs a ZDF account and activated personalization
+          (privacy settings) for the history. It keeps at most the 100 most
+          recent entries.
         </p>
       </section>
 

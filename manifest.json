@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Watcharr Scrobbler",
   "version": "1.8",
-  "description": "Automatically scrobbles what you watch on Netflix, Prime Video, ARD Mediathek and Jellyfin into your self-hosted Watcharr instance.",
+  "description": "Automatically scrobbles what you watch on Netflix, Prime Video, ARD Mediathek, ZDF Mediathek and Jellyfin into your self-hosted Watcharr instance.",
   "homepage_url": "https://github.com/matimb0/Watcharr-Scrobbler",
   "browser_specific_settings": {
     "gecko": {
@@ -19,6 +19,7 @@
     "*://*.primevideo.com/*",
     "*://*.ardmediathek.de/*",
     "*://firestore.googleapis.com/*",
+    "*://*.zdf.de/*",
     "*://*.themoviedb.org/*",
     "*://*.plex.tv/*"
   ],
@@ -46,6 +47,7 @@
       "background/messages/netflix.js",
       "background/messages/primevideo.js",
       "background/messages/ard.js",
+      "background/messages/zdf.js",
       "background/messages/history.js",
       "background/background.js"
     ]
@@ -100,6 +102,24 @@
         "content/ard/ard-playback.js",
         "content/ard/ard-history.js",
         "content/ard/ard-content.js"
+      ],
+      "run_at": "document_end"
+    },
+    {
+      "matches": ["*://www.zdf.de/*"],
+      "js": [
+        "content/shared/util.js",
+        "content/shared/playback.js",
+        "content/shared/settings.js",
+        "content/shared/watcharr.js",
+        "content/shared/scrobbler.js",
+        "content/shared/summary.js",
+        "content/shared/messaging.js",
+        "content/zdf/zdf-session.js",
+        "content/zdf/zdf-metadata.js",
+        "content/zdf/zdf-playback.js",
+        "content/zdf/zdf-history.js",
+        "content/zdf/zdf-content.js"
       ],
       "run_at": "document_end"
     }

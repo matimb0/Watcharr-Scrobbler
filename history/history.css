@@ -678,6 +678,10 @@ button:disabled {
   color: #6aa9e9;
 }
 
+.service-badge.s-zdf {
+  color: #f79c4a;
+}
+
 .service-badge.s-other {
   color: var(--text-dim);
 }

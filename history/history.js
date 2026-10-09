@@ -88,6 +88,12 @@ const ERROR_KEYS = {
   ard_session_expired: "history.error.ardSessionExpired",
   ard_unavailable: "history.error.ardUnavailable",
   ard_api_failed: "history.error.ardApiFailed",
+  // ZDF Mediathek (content/zdf/*)
+  zdf_no_token: "history.error.zdfNoToken",
+  zdf_not_logged_in: "history.error.zdfNotLoggedIn",
+  zdf_session_expired: "history.error.zdfSessionExpired",
+  zdf_unavailable: "history.error.zdfUnavailable",
+  zdf_api_failed: "history.error.zdfApiFailed",
 };
 
 // TMDB multi-search result types shown in the "change match" popover.
@@ -687,6 +693,7 @@ const SERVICE_COLORS = {
   primevideo: "#00a8e1",
   jellyfin: "#aa5cc3",
   ard: "#2f6fb5",
+  zdf: "#fa7d19",
 };
 
 /** CSS class suffix for the badge color: the known service id, or "other" for
@@ -700,6 +707,8 @@ function serviceColorClass(id) {
   if (key === "primevideo" || key === "prime") return "primevideo";
   // "ARD Mediathek" (the displayed name) -> registry id "ard".
   if (key === "ardmediathek" || key === "ard") return "ard";
+  // "ZDF Mediathek" (the displayed name) -> registry id "zdf".
+  if (key === "zdfmediathek" || key === "zdf") return "zdf";
   return SERVICE_COLORS[key] ? key : "other";
 }
 

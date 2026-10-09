@@ -94,6 +94,24 @@
       hasHistory: true,
     },
     {
+      id: "zdf",
+      name: "ZDF Mediathek",
+      urlTest: /^(www\.)?zdf\.de$/i,
+      // Only the website itself has the player. `api.zdf.de` (GraphQL metadata
+      // and the play history) is a host the background calls – see STATIC_HOSTS
+      // below and background/messages/zdf.js.
+      urlPattern: "*://www.zdf.de/*",
+      contentScripts: [
+        ...SHARED_CONTENT_SCRIPTS,
+        "content/zdf/zdf-session.js",
+        "content/zdf/zdf-metadata.js",
+        "content/zdf/zdf-playback.js",
+        "content/zdf/zdf-history.js",
+        "content/zdf/zdf-content.js",
+      ],
+      hasHistory: true,
+    },
+    {
       id: "jellyfin",
       name: "Jellyfin",
       // Self-hosted: no fixed domain. `serverUrl`/`urlPattern` are set from the
@@ -223,6 +241,10 @@
     // ARD keeps the user's play history in its own Firebase project; the read
     // goes through the background (background/messages/ard.js).
     "*://firestore.googleapis.com/*",
+    // api.zdf.de also covers the GraphQL content API (clip metadata) and the
+    // usage-data service (the user's own play history). Both are called from the
+    // background – see background/messages/zdf.js.
+    "*://*.zdf.de/*",
     // TMDB API (`api.themoviedb.org`, covered by this pattern): title searches,
     // seasons and localized episode names. Needed because Watcharr asks TMDB
     // with a hardcoded language (en-US), while the services report localized
@@ -310,7 +332,7 @@
    * pinged and re-injected when it does not report this version. Keep in sync
    * with CONTENT_SCRIPT_VERSION in content/shared/messaging.js.
    */
-  const CONTENT_SCRIPT_VERSION = 4;
+  const CONTENT_SCRIPT_VERSION = 5;
 
   /** True when a `watcharr:ping` answer came from this build's content script. */
   function isCurrentContent(ping) {
