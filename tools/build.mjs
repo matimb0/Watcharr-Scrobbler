@@ -42,6 +42,22 @@ const distDir = join(root, "dist");
 const rootManifest = JSON.parse(
   readFileSync(join(root, "manifest.json"), "utf8"),
 );
+
+// The Chrome Web Store rejects a package whose manifest description is longer
+// than 132 characters (error PKG_MANIFEST_SUMMARY_TOO_LONG). That answer only
+// arrives at upload time - after the tag was pushed and the version was already
+// submitted to AMO - so the shared manifest is checked here, where the build
+// fails instead of the release. Checked for both targets: the same manifest
+// ships to both stores.
+const DESCRIPTION_MAX = 132;
+if (rootManifest.description.length > DESCRIPTION_MAX) {
+  console.error(
+    `manifest.json: the description is ${rootManifest.description.length} characters long, ` +
+      `the Chrome Web Store allows ${DESCRIPTION_MAX} at most.`,
+  );
+  process.exit(1);
+}
+
 const addonId =
   rootManifest.browser_specific_settings?.gecko?.id?.split("@")[0];
 const baseName = addonId || "watcharr-scrobbler";
