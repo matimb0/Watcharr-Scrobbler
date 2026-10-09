@@ -12,11 +12,12 @@ Zuletzt aktualisiert: 2026-09-28
 ### 1. Worum es geht
 
 Watcharr Scrobbler ist eine Erweiterung, die erkennt, was du auf **Netflix**,
-**Prime Video** oder deinem **selbst gehosteten Jellyfin-Server** ansiehst, den
-Titel über die **TMDB**-API einer TMDB-ID zuordnet und den gesehenen Status an
-deine **selbst gehostete Watcharr-Instanz** meldet. Zusätzlich kannst du deine
-vorhandene Anseh-Historie dieser Dienste ansehen, mit Watcharr abgleichen und
-ausgewählte Einträge importieren oder als Datei exportieren.
+**Prime Video**, in der **ARD Mediathek** oder auf deinem **selbst gehosteten
+Jellyfin-Server** ansiehst, den Titel über die **TMDB**-API einer TMDB-ID
+zuordnet und den gesehenen Status an deine **selbst gehostete
+Watcharr-Instanz** meldet. Zusätzlich kannst du deine vorhandene Anseh-Historie
+dieser Dienste ansehen, mit Watcharr abgleichen und ausgewählte Einträge
+importieren oder als Datei exportieren.
 
 **Es gibt keinen Server des Entwicklers.** Es gibt keine Analyse-, Telemetrie-
 oder Werbefunktionen. Es werden keine Daten an den Entwickler oder an sonstige
@@ -24,16 +25,17 @@ Dritte verkauft oder übertragen.
 
 ### 2. Welche Daten verarbeitet werden
 
-| Daten | Zweck |
-| --- | --- |
-| Zugangsdaten für deine Watcharr-Instanz (Benutzername, Passwort) sowie ggf. deine Jellyfin-Zugangsdaten oder ein Plex-Token | einmalige Anmeldung; das **Passwort wird nicht gespeichert** |
-| Sitzungs-Token (JWT) deiner Watcharr-Instanz | authentifizierte Aufrufe deiner Watcharr-API |
-| Zugriffs-Token deiner Jellyfin-Web-Client-Sitzung (aus dem localStorage des Jellyfin-Web-Clients) | Aufrufe deines Jellyfin-Servers (Wiedergabestatus, Historie) |
-| Adresse deiner Watcharr- bzw. Jellyfin-Instanz | Ziel der API-Aufrufe |
-| Titel, Serien-/Episodennamen, Staffel-/Episodennummer, Jahr, Wiedergabefortschritt und Anseh-Zeitpunkte der genannten Dienste | erkennen, zuordnen und melden, was du gesehen hast |
-| Suchbegriffe (Titel) für die TMDB-Suche | Zuordnung zu einer TMDB-ID |
-| Einstellungen (Schwellenwert für „gesehen“, Sprache, Aktiviert-Status, ggf. dein eigener TMDB-API-Schlüssel) | Funktion und Darstellung der Erweiterung |
-| Lokaler Zuordnungs-Cache (Titel ↔ TMDB-ID) | dieselbe Zuordnung nicht erneut suchen zu müssen |
+| Daten                                                                                                                         | Zweck                                                                                                                                          |
+| ----------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| Zugangsdaten für deine Watcharr-Instanz (Benutzername, Passwort) sowie ggf. deine Jellyfin-Zugangsdaten oder ein Plex-Token   | einmalige Anmeldung; das **Passwort wird nicht gespeichert**                                                                                   |
+| Sitzungs-Token (JWT) deiner Watcharr-Instanz                                                                                  | authentifizierte Aufrufe deiner Watcharr-API                                                                                                   |
+| Zugriffs-Token deiner Jellyfin-Web-Client-Sitzung (aus dem localStorage des Jellyfin-Web-Clients)                             | Aufrufe deines Jellyfin-Servers (Wiedergabestatus, Historie)                                                                                   |
+| Sitzungs-Token (Firebase-ID-Token) deiner ARD-Mediathek-Anmeldung (aus dem lokalen Speicher der ARD-Mediathek-Seite)          | Abruf deines ARD-Verlaufs („Weiterschauen“) aus der ARD-eigenen Firebase-Datenbank – ausschließlich lesend, nur solange du den Verlauf öffnest |
+| Adresse deiner Watcharr- bzw. Jellyfin-Instanz                                                                                | Ziel der API-Aufrufe                                                                                                                           |
+| Titel, Serien-/Episodennamen, Staffel-/Episodennummer, Jahr, Wiedergabefortschritt und Anseh-Zeitpunkte der genannten Dienste | erkennen, zuordnen und melden, was du gesehen hast                                                                                             |
+| Suchbegriffe (Titel) für die TMDB-Suche                                                                                       | Zuordnung zu einer TMDB-ID                                                                                                                     |
+| Einstellungen (Schwellenwert für „gesehen“, Sprache, Aktiviert-Status, ggf. dein eigener TMDB-API-Schlüssel)                  | Funktion und Darstellung der Erweiterung                                                                                                       |
+| Lokaler Zuordnungs-Cache (Titel ↔ TMDB-ID)                                                                                    | dieselbe Zuordnung nicht erneut suchen zu müssen                                                                                               |
 
 Deine Netzwerkadresse (IP) und technisch notwendige Verbindungsdaten fallen bei
 den unten genannten Empfängern an, weil dorthin eine Verbindung aufgebaut wird.
@@ -49,7 +51,8 @@ Entwicklers oder bei Dritten gespeichert.
 ### 4. Wohin Daten übertragen werden
 
 Nur an die Stellen, die für die Funktion erforderlich sind – alle Zieladressen
-(außer Netflix, Prime Video, TMDB und plex.tv) gibst **du** selbst ein:
+(außer Netflix, Prime Video, ARD Mediathek, TMDB und plex.tv) gibst **du**
+selbst ein:
 
 - **Deine Watcharr-Instanz** (Adresse von dir): Login und Scrobbling.
 - **Dein Jellyfin-Server** (Adresse von dir): Wiedergabestatus und Historie.
@@ -57,9 +60,14 @@ Nur an die Stellen, die für die Funktion erforderlich sind – alle Zieladresse
   Suchbegriffe gesendet.
 - **`*.plex.tv`**: nur wenn du die Plex-Anmeldung wählst (OAuth-Freigabe).
   Das dabei erhaltene Token wird an **deine** Watcharr-Instanz gesendet.
-- **`*.netflix.com` / `*.primevideo.com`**: Anfragen aus dem Content-Script
-  erfolgen ausschließlich im Kontext der jeweiligen Seite und mit deiner
-  bestehenden Sitzung auf diesen Seiten.
+- **`*.netflix.com` / `*.primevideo.com` / `*.ardmediathek.de`**: Anfragen aus
+  dem Content-Script erfolgen ausschließlich im Kontext der jeweiligen Seite und
+  mit deiner bestehenden Sitzung auf diesen Seiten.
+- **`firestore.googleapis.com`**: die ARD Mediathek speichert den Verlauf ihrer
+  Nutzer in einer eigenen Firebase-Datenbank (Projekt `ardmt-prod`). Öffnest du
+  den Verlauf, liest die Erweiterung genau diesen Eintrag mit deinem eigenen
+  ARD-Sitzungs-Token aus. Es wird ausschließlich **gelesen**, nichts geschrieben
+  und nichts an andere Empfänger gesendet.
 
 Alle Übertragungen erfolgen über verschlüsselte Verbindungen (HTTPS/WSS),
 soweit der jeweilige Dienst dies unterstützt.
@@ -73,7 +81,8 @@ soweit der jeweilige Dienst dies unterstützt.
   Darlehenszwecke.
 - Keine Werbung, kein Profiling, keine Analyse- oder Telemetriedaten.
 - Kein Auslesen deines allgemeinen Browser-Verlaufs. Gelesen werden nur die
-  Inhalte der Seiten der unterstützten Dienste (Netflix, Prime Video, Jellyfin).
+  Inhalte der Seiten der unterstützten Dienste (Netflix, Prime Video, ARD
+  Mediathek, Jellyfin).
 - Kein Remote-Code: Die Erweiterung lädt und führt keinen Code aus, der nicht
   im Erweiterungspaket enthalten ist (kein `eval`, keine externen Skripte).
 
@@ -111,11 +120,12 @@ Fragen oder Hinweise: <https://github.com/matimb0/Watcharr-Scrobbler/issues>
 
 ### 1. What this extension does
 
-Watcharr Scrobbler detects what you watch on **Netflix**, **Prime Video** or
-your **self-hosted Jellyfin server**, matches the title to a TMDB ID via the
-**TMDB** API, and reports the watched status to **your self-hosted Watcharr
-instance**. It also lets you view the service's existing watch history, compare
-it with Watcharr, and import or export selected entries as a file.
+Watcharr Scrobbler detects what you watch on **Netflix**, **Prime Video**, in
+the **ARD Mediathek** or on your **self-hosted Jellyfin server**, matches the
+title to a TMDB ID via the **TMDB** API, and reports the watched status to **your
+self-hosted Watcharr instance**. It also lets you view the service's existing
+watch history, compare it with Watcharr, and import or export selected entries as
+a file.
 
 **There is no developer-operated server.** There is no analytics, telemetry or
 advertising. No user data is sold or transferred to the developer or any other
@@ -123,16 +133,17 @@ third party.
 
 ### 2. Data the extension processes
 
-| Data | Purpose |
-| --- | --- |
-| Credentials for your Watcharr instance (username, password) and, if used, your Jellyfin credentials or a Plex token | one-time sign-in; the **password is never stored** |
-| Session token (JWT) for your Watcharr instance | authenticated calls to your Watcharr API |
-| Access token of your Jellyfin web-client session (read from the Jellyfin web client's localStorage) | requests to your Jellyfin server (playback status, history) |
-| Address of your Watcharr / Jellyfin instance | target of the API calls |
-| Titles, series/episode names, season/episode numbers, year, playback progress and watch dates as reported by those services | detect, match and report what you watched |
-| Search terms (titles) for the TMDB lookup | match an entry to a TMDB ID |
-| Settings (finished threshold, language, enabled state, optional own TMDB API key) | behaviour and display of the extension |
-| Local match cache (title ↔ TMDB ID) | avoid looking up the same match twice |
+| Data                                                                                                                        | Purpose                                                                                                                                 |
+| --------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| Credentials for your Watcharr instance (username, password) and, if used, your Jellyfin credentials or a Plex token         | one-time sign-in; the **password is never stored**                                                                                      |
+| Session token (JWT) for your Watcharr instance                                                                              | authenticated calls to your Watcharr API                                                                                                |
+| Access token of your Jellyfin web-client session (read from the Jellyfin web client's localStorage)                         | requests to your Jellyfin server (playback status, history)                                                                             |
+| Session token (Firebase ID token) of your ARD Mediathek login (read from the ARD Mediathek page's local storage)            | reading your ARD watch history ("Weiterschauen") from ARD's own Firebase database – read-only, and only while you open the history page |
+| Address of your Watcharr / Jellyfin instance                                                                                | target of the API calls                                                                                                                 |
+| Titles, series/episode names, season/episode numbers, year, playback progress and watch dates as reported by those services | detect, match and report what you watched                                                                                               |
+| Search terms (titles) for the TMDB lookup                                                                                   | match an entry to a TMDB ID                                                                                                             |
+| Settings (finished threshold, language, enabled state, optional own TMDB API key)                                           | behaviour and display of the extension                                                                                                  |
+| Local match cache (title ↔ TMDB ID)                                                                                         | avoid looking up the same match twice                                                                                                   |
 
 Your IP address and technically required connection data are processed by the
 recipients listed in section 4, because a connection to them is established.
@@ -147,15 +158,22 @@ closed). No user data is stored on developer or third-party servers.
 ### 4. Where data is transmitted
 
 Only where required for the extension's functionality. Apart from Netflix,
-Prime Video, TMDB and plex.tv, **you** enter every destination address yourself:
+Prime Video, ARD Mediathek, TMDB and plex.tv, **you** enter every destination
+address yourself:
 
 - **Your Watcharr instance** (address entered by you): login and scrobbling.
 - **Your Jellyfin server** (address entered by you): playback status and history.
 - **`api.themoviedb.org`**: matching titles to TMDB IDs; only search terms are sent.
 - **`*.plex.tv`**: only if you choose the Plex sign-in (OAuth). The resulting
   token is sent to **your** Watcharr instance.
-- **`*.netflix.com` / `*.primevideo.com`**: content-script requests are made in
-  the context of those pages only, using your existing session there.
+- **`*.netflix.com` / `*.primevideo.com` / `*.ardmediathek.de`**: content-script
+  requests are made in the context of those pages only, using your existing
+  session there.
+- **`firestore.googleapis.com`**: the ARD Mediathek stores its users' watch
+  history in its own Firebase database (project `ardmt-prod`). When you open the
+  history, the extension reads exactly that collection with your own ARD session
+  token. It is strictly **read-only** – nothing is written and nothing is sent to
+  any other recipient.
 
 All transmissions use encrypted connections (HTTPS/WSS) wherever the respective
 service supports it.
@@ -167,7 +185,8 @@ service supports it.
 - No use of user data for creditworthiness or lending purposes.
 - No advertising, no profiling, no analytics or telemetry.
 - No reading of your general browsing history. Only the content of the
-  supported service pages (Netflix, Prime Video, Jellyfin) is read.
+  supported service pages (Netflix, Prime Video, ARD Mediathek, Jellyfin) is
+  read.
 - No remote code: the extension does not load or execute any code that is not
   part of the extension package (no `eval`, no external scripts).
 

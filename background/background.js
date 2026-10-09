@@ -13,6 +13,7 @@ const MESSAGE_HANDLERS = [
   WatcharrMessageScrobble,
   WatcharrMessageNetflix,
   WatcharrMessagePrimeVideo,
+  WatcharrMessageArd,
   WatcharrMessageHistory,
 ];
 

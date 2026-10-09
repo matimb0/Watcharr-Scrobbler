@@ -72,6 +72,28 @@
       hasHistory: true,
     },
     {
+      id: "ard",
+      name: "ARD Mediathek",
+      urlTest: /^(www\.)?ardmediathek\.de$/i,
+      // Only the website itself has the player. `api.ardmediathek.de` and
+      // `firestore.googleapis.com` (the play history) are hosts the background
+      // calls – see STATIC_HOSTS below and background/messages/ard.js.
+      //
+      // The history does NOT come from an API of the site, but from the
+      // Firebase collection the page keeps for the logged-in user – see
+      // content/ard/ard-history.js.
+      urlPattern: "*://www.ardmediathek.de/*",
+      contentScripts: [
+        ...SHARED_CONTENT_SCRIPTS,
+        "content/ard/ard-session.js",
+        "content/ard/ard-metadata.js",
+        "content/ard/ard-playback.js",
+        "content/ard/ard-history.js",
+        "content/ard/ard-content.js",
+      ],
+      hasHistory: true,
+    },
+    {
       id: "jellyfin",
       name: "Jellyfin",
       // Self-hosted: no fixed domain. `serverUrl`/`urlPattern` are set from the
@@ -193,6 +215,14 @@
     // primevideo.com also covers the Prime Video API hosts
     // (atv-ps.primevideo.com, atv-ps-<region>.primevideo.com).
     "*://*.primevideo.com/*",
+    // ardmediathek.de also covers the page-gateway API
+    // (api.ardmediathek.de) that serves the clip metadata. The ARD session
+    // itself is never requested from an ARD host – it is read from the page
+    // (content/ard/ard-session.js).
+    "*://*.ardmediathek.de/*",
+    // ARD keeps the user's play history in its own Firebase project; the read
+    // goes through the background (background/messages/ard.js).
+    "*://firestore.googleapis.com/*",
     // TMDB API (`api.themoviedb.org`, covered by this pattern): title searches,
     // seasons and localized episode names. Needed because Watcharr asks TMDB
     // with a hardcoded language (en-US), while the services report localized

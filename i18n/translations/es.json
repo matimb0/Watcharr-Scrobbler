@@ -1,7 +1,7 @@
 {
   "page": {
     "title": "Watcharr Scrobbler",
-    "subtitle": "Scrobble Netflix, Prime Video y Jellyfin → Watcharr",
+    "subtitle": "Scrobble Netflix, Prime Video, ARD Mediathek y Jellyfin → Watcharr",
     "settingsTitle": "Watcharr Scrobbler – Ajustes"
   },
   "settings": {
@@ -19,20 +19,21 @@
     "logout": "Cerrar sesión",
     "scrobbling": "Scrobble",
     "scrobblingEnabled": "Scrobble activado",
-    "scrobblingHint": "Añade automáticamente películas y series de Netflix, Prime Video y Jellyfin a Watcharr.",
+    "scrobblingHint": "Añade automáticamente películas y series de Netflix, Prime Video, ARD Mediathek y Jellyfin a Watcharr.",
     "threshold": "Marcar como visto a partir de … % de progreso",
     "thresholdHint": "Cuando una película o un episodio alcanza este progreso, se marca como visto (FINISHED) en Watcharr.",
     "history": "Historial",
     "historyHint": "Abre la página de historial con la comparación servicio ↔ Watcharr, la corrección de coincidencias y la importación selectiva.",
     "historyBtn": "Abrir historial",
     "howItWorks": "Cómo funciona",
-    "step1": "Abre Netflix, Prime Video o tu servidor Jellyfin y reproduce una película o una serie.",
+    "step1": "Abre Netflix, Prime Video, ARD Mediathek o tu servidor Jellyfin y reproduce una película o una serie.",
     "step2": "La extensión detecta el título, la temporada y el episodio a través del reproductor o de la API de metadatos del servicio.",
     "step3": "Busca el título en tu instancia de Watcharr (ID de TMDB) y lo añade a tu lista de seguimiento (<em>WATCHING</em>).",
     "step4Before": "Cuando una película o un episodio se haya visto hasta ≥",
     "step4After": " %, se marca como visto (<em>FINISHED</em>).",
     "behaviourHint": "Puedes ajustar el comportamiento en cualquier momento desde el popup o desde esta página.",
     "primeVideoNote": "Prime Video solo es accesible a través de <strong>primevideo.com</strong>.",
+    "ardNote": "ARD Mediathek requiere una cuenta ARD/ZDF: el scrobbling y el historial usan la sesión de este navegador. El historial solo contiene lo que ARD Mediathek conserva (máximo 240 entradas).",
     "version": "Versión {version}",
     "projectLink": "GitHub",
     "projectLinkTitle": "Abrir la página del proyecto en GitHub",
@@ -81,7 +82,7 @@
   },
   "popup": {
     "nowPlaying": "Reproduciendo en {service}",
-    "noService": "Abre Netflix, Prime Video o Jellyfin y reproduce una película o una serie; el popup mostrará entonces el progreso.",
+    "noService": "Abre Netflix, Prime Video, ARD Mediathek o Jellyfin y reproduce una película o una serie; el popup mostrará entonces el progreso.",
     "notConfigured": "Sin configurar.",
     "notConfiguredDetail": "Conecta tu instancia de Watcharr en los ajustes.",
     "scrobblingActive": "Scrobble activo",
@@ -107,7 +108,7 @@
   },
   "toolbar": {
     "openSettings": "Abrir ajustes",
-    "openService": "Abrir Netflix, Prime Video o Jellyfin"
+    "openService": "Abrir Netflix, Prime Video, ARD Mediathek o Jellyfin"
   },
   "history": {
     "title": "Watcharr Scrobbler – Historial",
@@ -288,7 +289,11 @@
       "tmdbNotFound": "Los datos de TMDB del archivo no se encontraron en Watcharr; elige la coincidencia manualmente.",
       "jellyfinNotLoggedIn": "No se ha encontrado ninguna sesión de Jellyfin. Inicia sesión en Jellyfin en este navegador y recarga la página.",
       "jellyfinUnavailable": "No se pudo acceder al servidor Jellyfin.",
-      "jellyfinApiFailed": "La API de Jellyfin devolvió un error."
+      "jellyfinApiFailed": "La API de Jellyfin devolvió un error.",
+      "ardNotLoggedIn": "No se ha encontrado ninguna sesión de ARD Mediathek. Inicia sesión en ARD Mediathek en este navegador y recarga la página.",
+      "ardSessionExpired": "La sesión de ARD Mediathek ha caducado. Recarga la página de ARD Mediathek e inténtalo de nuevo.",
+      "ardUnavailable": "No se pudo acceder a ARD Mediathek.",
+      "ardApiFailed": "No se pudo leer el historial de ARD Mediathek."
     }
   }
 }

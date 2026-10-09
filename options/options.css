@@ -233,9 +233,10 @@ button.provider:disabled {
   font-size: 12px;
 }
 
-/* Prime Video note under "How it works": advice that belongs to one service,
-   so it gets a hairline instead of blending into the step list. */
-.hint.primevideo-hint {
+/* Per-service notes under "How it works": advice that belongs to one service,
+   so each gets a hairline instead of blending into the step list. */
+.hint.primevideo-hint,
+.hint.ard-hint {
   margin-top: 14px;
   padding-top: 12px;
   border-top: 1px solid var(--border);

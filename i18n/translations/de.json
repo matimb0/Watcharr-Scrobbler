@@ -1,7 +1,7 @@
 {
   "page": {
     "title": "Watcharr Scrobbler",
-    "subtitle": "Netflix, Prime Video & Jellyfin → Watcharr scrobbeln",
+    "subtitle": "Netflix, Prime Video, ARD Mediathek & Jellyfin → Watcharr scrobbeln",
     "settingsTitle": "Watcharr Scrobbler – Einstellungen"
   },
   "settings": {
@@ -19,20 +19,21 @@
     "logout": "Abmelden",
     "scrobbling": "Scrobbeln",
     "scrobblingEnabled": "Scrobbeln aktiviert",
-    "scrobblingHint": "Fügt Filme/Serien automatisch aus Netflix, Prime Video und Jellyfin zu Watcharr hinzu.",
+    "scrobblingHint": "Fügt Filme/Serien automatisch aus Netflix, Prime Video, der ARD Mediathek und Jellyfin zu Watcharr hinzu.",
     "threshold": "Als gesehen markieren ab … % Fortschritt",
     "thresholdHint": "Wenn ein Film oder eine Folge diesen Fortschritt erreicht, wird er in Watcharr als gesehen markiert (FINISHED).",
     "history": "Verlauf",
     "historyHint": "Öffnet die Verlaufseite mit Gegenüberstellung, Korrektur und selektivem Import.",
     "historyBtn": "Verlauf öffnen",
     "howItWorks": "So funktioniert es",
-    "step1": "Öffne Netflix, Prime Video oder deinen Jellyfin-Server und starte einen Film oder eine Serie.",
+    "step1": "Öffne Netflix, Prime Video, die ARD Mediathek oder deinen Jellyfin-Server und starte einen Film oder eine Serie.",
     "step2": "Das Add-on erkennt Titel, Staffel und Folge über den Player bzw. die Metadata-API des Dienstes.",
     "step3": "Es sucht den Titel über deine Watcharr-Instanz (TMDB-ID) und fügt ihn deiner Watchlist hinzu (<em>WATCHING</em>).",
     "step4Before": "Wenn ein Film/eine Folge bis zu ≥",
     "step4After": " % gesehen wurde, wird er als gesehen markiert (<em>FINISHED</em>).",
     "behaviourHint": "Du kannst das Verhalten jederzeit über das Popup oder diese Seite anpassen.",
     "primeVideoNote": "Prime Video ist ausschließlich über <strong>primevideo.com</strong> erreichbar.",
+    "ardNote": "Die ARD Mediathek braucht ein ARD/ZDF-Konto: Scrobbling und Verlauf nutzen die Anmeldung in diesem Browser. Der Verlauf umfasst nur, was die ARD Mediathek noch vorhält (max. 240 Einträge).",
     "version": "Version {version}",
     "projectLink": "GitHub",
     "projectLinkTitle": "Projektseite auf GitHub öffnen",
@@ -81,7 +82,7 @@
   },
   "popup": {
     "nowPlaying": "Aktuell auf {service}",
-    "noService": "Öffne Netflix, Prime Video oder Jellyfin und starte einen Film oder eine Serie – im Popup erscheint dann der Fortschritt.",
+    "noService": "Öffne Netflix, Prime Video, die ARD Mediathek oder Jellyfin und starte einen Film oder eine Serie – im Popup erscheint dann der Fortschritt.",
     "notConfigured": "Nicht konfiguriert.",
     "notConfiguredDetail": "Verbinde deine Watcharr-Instanz in den Einstellungen.",
     "scrobblingActive": "Scrobbeln aktiv",
@@ -107,7 +108,7 @@
   },
   "toolbar": {
     "openSettings": "Einstellungen öffnen",
-    "openService": "Netflix, Prime Video oder Jellyfin öffnen"
+    "openService": "Netflix, Prime Video, ARD Mediathek oder Jellyfin öffnen"
   },
   "history": {
     "title": "Watcharr Scrobbler – Verlauf",
@@ -288,7 +289,11 @@
       "tmdbNotFound": "Die TMDB-Daten aus der Datei wurden in Watcharr nicht gefunden – bitte die Zuordnung manuell wählen.",
       "jellyfinNotLoggedIn": "Keine Jellyfin-Anmeldung gefunden. Bitte melde dich in diesem Browser bei Jellyfin an und lade die Seite neu.",
       "jellyfinUnavailable": "Der Jellyfin-Server konnte nicht erreicht werden.",
-      "jellyfinApiFailed": "Die Jellyfin-API hat einen Fehler zurückgegeben."
+      "jellyfinApiFailed": "Die Jellyfin-API hat einen Fehler zurückgegeben.",
+      "ardNotLoggedIn": "Keine ARD-Mediathek-Anmeldung gefunden. Bitte melde dich in diesem Browser bei der ARD Mediathek an und lade die Seite neu.",
+      "ardSessionExpired": "Die ARD-Mediathek-Sitzung ist abgelaufen. Bitte lade die ARD-Mediathek-Seite neu und versuche es erneut.",
+      "ardUnavailable": "Die ARD Mediathek konnte nicht erreicht werden.",
+      "ardApiFailed": "Der Verlauf der ARD Mediathek konnte nicht gelesen werden."
     }
   }
 }

@@ -674,6 +674,10 @@ button:disabled {
   color: #c08bea;
 }
 
+.service-badge.s-ard {
+  color: #6aa9e9;
+}
+
 .service-badge.s-other {
   color: var(--text-dim);
 }

@@ -83,6 +83,11 @@ const ERROR_KEYS = {
   jellyfin_not_logged_in: "history.error.jellyfinNotLoggedIn",
   jellyfin_unavailable: "history.error.jellyfinUnavailable",
   jellyfin_api_failed: "history.error.jellyfinApiFailed",
+  // ARD Mediathek (content/ard/*)
+  ard_not_logged_in: "history.error.ardNotLoggedIn",
+  ard_session_expired: "history.error.ardSessionExpired",
+  ard_unavailable: "history.error.ardUnavailable",
+  ard_api_failed: "history.error.ardApiFailed",
 };
 
 // TMDB multi-search result types shown in the "change match" popover.
@@ -681,6 +686,7 @@ const SERVICE_COLORS = {
   netflix: "#e50914",
   primevideo: "#00a8e1",
   jellyfin: "#aa5cc3",
+  ard: "#2f6fb5",
 };
 
 /** CSS class suffix for the badge color: the known service id, or "other" for
@@ -692,6 +698,8 @@ function serviceColorClass(id) {
     .replace(/[^a-z0-9]/g, "");
   // "prime video" (the displayed name) has to land on the registry id as well.
   if (key === "primevideo" || key === "prime") return "primevideo";
+  // "ARD Mediathek" (the displayed name) -> registry id "ard".
+  if (key === "ardmediathek" || key === "ard") return "ard";
   return SERVICE_COLORS[key] ? key : "other";
 }
 

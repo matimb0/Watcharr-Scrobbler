@@ -33,6 +33,7 @@ importScripts(
   "messages/scrobble.js",
   "messages/netflix.js",
   "messages/primevideo.js",
+  "messages/ard.js",
   "messages/history.js",
   "background.js",
 );
