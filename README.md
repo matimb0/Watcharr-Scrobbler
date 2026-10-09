@@ -100,16 +100,9 @@ You can see the status and progress at any time in the **Popup**.
 > **Prime Video:** Reachable exclusively via **primevideo.com** – the
 > account's Amazon marketplace is not used.
 
-> **ARD Mediathek:** Needs an ARD/ZDF account. Scrobbling and history use the
-> login of this browser (no separate sign-in). ARD exposes no viewing-activity
-> export: the history is read read-only from ARD's own Firebase database and only
-> covers what the ARD Mediathek still keeps – at most the **240 most recent**
-> entries, completed ones included. Live streams are not scrobbled.
+> **ARD Mediathek:** Only the **240 most recent entries** are kept.
 
-> **ZDF Mediathek:** Needs a ZDF account, and its viewing history additionally
-> requires **activated personalization** in the ZDF privacy settings. The
-> history is read read-only and covers at most the **100 most recent** entries.
-> Live streams and trailers are not scrobbled.
+> **ZDF Mediathek:** Only the **100 most recent entries** are kept.
 
 <br>
 
