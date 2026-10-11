@@ -1313,33 +1313,42 @@ function clearList(loadingText, showCancel) {
 
 async function load() {
   if (loadingInitial || exporting) return false; // a load/export is running
-  // Watcharr URL and Jellyfin server decide which host access is required –
-  // pick up changes made on the settings page since this page was opened.
-  if (!fileMode) await refreshLoadedSettings();
-  // Without host access the service tab cannot be read at all, and the remedy
-  // needs a click – so say that instead of failing inside the tab.
-  if (!fileMode && !(await hasServiceAccess())) {
-    await showNeedPermission();
-    return false;
-  }
+  // Lock SYNCHRONOUSLY, before the first await. Two loads started in the same
+  // tick – the initial reconciliation and the background's tab broadcast, for
+  // example – would otherwise both pass the guard above, because the flag used
+  // to be set only after the awaits below. Both then reached the background,
+  // whose second load answered with an EMPTY first page (the first one already
+  // owned the service page). That empty answer was the newer one and therefore
+  // the accepted one, so the page filled the list from the SECOND service page
+  // on: the newest 20 entries stayed missing until the next reload.
   loadingInitial = true; // lock infinite scroll until this load finishes
   const gen = ++loadGen; // supersede any in-flight "load more" / older loads
-  clearStatus();
-  updateViewMenu();
-  const loadingMsg = await t(
-    fileMode
-      ? "history.loadingFile"
-      : oldestFirst
-        ? "history.loadingHistoryOldest"
-        : "history.loadingHistory",
-  );
-  setStatus("info", loadingMsg);
-  // Remove the previously displayed history; for the long "oldest first"
-  // load offer a button to abort it and show the fetch progress.
-  clearList(loadingMsg, oldestFirst);
-  if (oldestFirst) startProgressPolling("list");
   let ok = false;
   try {
+    // Watcharr URL and Jellyfin server decide which host access is required –
+    // pick up changes made on the settings page since this page was opened.
+    if (!fileMode) await refreshLoadedSettings();
+    // Without host access the service tab cannot be read at all, and the remedy
+    // needs a click – so say that instead of failing inside the tab.
+    if (!fileMode && !(await hasServiceAccess())) {
+      await showNeedPermission();
+      return false;
+    }
+    if (gen !== loadGen) return false; // superseded while checking access
+    clearStatus();
+    updateViewMenu();
+    const loadingMsg = await t(
+      fileMode
+        ? "history.loadingFile"
+        : oldestFirst
+          ? "history.loadingHistoryOldest"
+          : "history.loadingHistory",
+    );
+    setStatus("info", loadingMsg);
+    // Remove the previously displayed history; for the long "oldest first"
+    // load offer a button to abort it and show the fetch progress.
+    clearList(loadingMsg, oldestFirst);
+    if (oldestFirst) startProgressPolling("list");
     const resp = await browser.runtime.sendMessage(loadRequest());
     if (gen !== loadGen) return false; // superseded – a newer load owns the state
     if (resp && resp.cancelled) {
